@@ -5,7 +5,7 @@ import type { Store, SessionRow } from "./store.ts";
 import type { HostHub } from "./tunnel.ts";
 import { logger } from "../shared/log.ts";
 
-const log = logger("cp.sched");
+const log = logger("sched");
 const UNKNOWN_GRACE_MS = 90_000;
 
 export class Scheduler {
@@ -59,6 +59,7 @@ export class Scheduler {
     const spec: SessionSpec = {
       sid: row.id, repo: row.repo, branch: row.branch, base_branch: row.base_branch,
       prompt: row.prompt, image: row.image, idle_timeout_s: row.idle_timeout_s, env,
+      agent: row.agent, model: row.model, llm_base_url: row.llm_base_url,
     };
     if (!this.hub.createSession(hostId, spec)) return false;
     this.secrets.delete(row.id);

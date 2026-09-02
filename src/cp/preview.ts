@@ -5,7 +5,7 @@ import type { HostHub } from "./tunnel.ts";
 import type { Store } from "./store.ts";
 import { Tokens } from "./tokens.ts";
 
-export const COOKIE = "cp_preview";
+export const COOKIE = "devagents_preview";
 const COOKIE_TTL_MS = 12 * 60 * 60 * 1000;
 
 export class PreviewProxy {

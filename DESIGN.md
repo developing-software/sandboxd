@@ -1,4 +1,4 @@
-# Control Plane — prototype design
+# devagents — prototype design
 
 Status: **signed 2026-09-01**. This is the v1 contract. Change it here first.
 
@@ -7,7 +7,7 @@ Status: **signed 2026-09-01**. This is the v1 contract. Change it here first.
 A microservice that lets a parent application run **agent tasks** on a fleet of
 self-hosted machines and supervise them through a browser terminal.
 
-- A **host** is a real machine you own, running `cp-agent`. It dials **out** to
+- A **host** is a real machine you own, running `devagents`. It dials **out** to
   the control plane over one persistent WebSocket; nothing inbound is required.
 - A **session** is one agent task: a fresh Docker sandbox, a fresh clone of a
   repo on its own branch, `claude "<prompt>"` started in a PTY. Disposable.
@@ -34,8 +34,9 @@ self-hosted machines and supervise them through a browser terminal.
 | 13 | SQLite only; daemon is source of truth for running state | Redis (solves nothing without multi-instance) |
 | 14 | Raw Docker Engine API behind `SandboxDriver` | Sandcastle / TanStack sandbox (they want to own the agent run) |
 | 15 | One default image in-repo, `image:` override per session | Caller-supplied always; per-host image |
+| 19 | Agent is a per-session choice (`claude` \| `codex` \| `opencode` \| `shell`); one LLM gateway tuple (`base_url`, `api_key`, `model`) is mapped by the entry script onto each harness's own config | Claude-only; per-agent config schemas in the API |
 | 16 | `Bun.serve` + `bun:sqlite`, zero runtime deps | Hono / Elysia |
-| 17 | `/dev` xterm.js page behind `CP_DEV=true` | No UI; real Svelte frontend |
+| 17 | `/dev` xterm.js page behind `DEVAGENTS_DEV=true` | No UI; real Svelte frontend |
 | 18 | One package, `src/{protocol,shared,cp,agent,dev}` | Bun workspaces |
 
 ## Topology
@@ -43,7 +44,7 @@ self-hosted machines and supervise them through a browser terminal.
 ```
   host "hetzner-1"                     host "laptop" (NAT)
   ┌──────────────────────┐             ┌──────────────────────┐
-  │ cp-agent             │             │ cp-agent             │
+  │ devagents             │             │ devagents             │
   │  ├ sandbox s_1 ─ pty │             │  └ sandbox s_3 ─ pty │
   │  └ sandbox s_2 ─ pty │             └──────────┬───────────┘
   └──────────┬───────────┘                        │
@@ -85,7 +86,7 @@ POST /sessions ──► queued ──► creating ──► running ──► e
 
 ## Trust
 
-- **Parent → CP:** `Authorization: Bearer <CP_SERVICE_TOKEN>`. Every request
+- **Parent → CP:** `Authorization: Bearer <DEVAGENTS_SERVICE_TOKEN>`. Every request
   carries `owner_id`; CP enforces `session.owner_id == owner_id`. CP has no
   user table.
 - **Browser → terminal:** parent calls `POST /sessions/:id/attach-token`
@@ -93,15 +94,15 @@ POST /sessions ──► queued ──► creating ──► running ──► e
 - **Browser → preview:** parent calls `POST /sessions/:id/preview-token`
   (10 m). Browser hits `https://3000-s_x.preview.<domain>/?t=…`; CP verifies,
   sets a signed, subdomain-scoped cookie, redirects to `/`.
-- **Secrets:** `secrets.git_token`, `secrets.anthropic_api_key` on create.
+- **Secrets:** `secrets.git_token`, `secrets.anthropic_api_key`, `llm.api_key` on create.
   Forwarded to the daemon, injected as env into the container. Not written to
   SQLite, not logged, dropped from memory after `docker create`.
 - **Enrollment:** daemon generates `host_secret` on first run
-  (`~/.config/cp-agent/host.json`, 0600). `hello{name, fingerprint}` where
+  (`~/.config/devagents/host.json`, 0600). `hello{name, fingerprint}` where
   `fingerprint = sha256(secret)`. Unknown fingerprint → CP inserts
   `status:pending`, mints code `XXXX-XX`, replies `pending{code}`; daemon
   prints it and waits. Admin: `POST /hosts/:id/approve {code}`. Next hello is
-  accepted. Revoke = `status:revoked`. `CP_AUTO_APPROVE` does not exist in v1.
+  accepted. Revoke = `status:revoked`. `DEVAGENTS_AUTO_APPROVE` does not exist in v1.
 - **Git:** HTTPS clone; token supplied via `GIT_ASKPASS` helper. No SSH.
 
 ## Wire protocol (host ↔ CP)
@@ -131,8 +132,12 @@ Stream ids are allocated by the CP (odd) and never reused within a connection.
 GET    /hosts                          list (status, online, running/max)
 POST   /hosts/:id/approve   {code}
 POST   /hosts/:id/revoke
-POST   /sessions            {owner_id, repo, prompt, base_branch?, branch?,
-                             image?, idle_timeout_s?, secrets:{git_token, anthropic_api_key}}
+POST   /sessions            {owner_id, repo, prompt, base_branch?, branch?, image?, idle_timeout_s?,
+                             agent?: claude|codex|opencode|shell, model?,
+                             llm?: {base_url?, api_key?},          // OpenAI/Anthropic-compatible gateway (LiteLLM)
+                             secrets?: {git_token?, anthropic_api_key?}}
+                            defaults: agent = DEVAGENTS_DEFAULT_AGENT (shell if prompt empty),
+                                      model = DEVAGENTS_DEFAULT_MODEL (claude-sonnet-4-6), llm = DEVAGENTS_LLM_BASE_URL / DEVAGENTS_LLM_API_KEY (or plain LLM_BASE_URL / LLM_API_KEY)
 GET    /sessions?owner_id=
 GET    /sessions/:id
 DELETE /sessions/:id
@@ -140,7 +145,7 @@ POST   /sessions/:id/attach-token      → {token, wss_url}
 POST   /sessions/:id/preview-token {port} → {token, url}
 GET    /attach?token=                   WebSocket (xterm ↔ pty)
 *      <port>-<sid>.preview.<domain>/*  preview proxy
-GET    /dev                             only with CP_DEV=true
+GET    /dev                             only with DEVAGENTS_DEV=true
 ```
 
 Browser attach WS: binary frames = PTY bytes both ways; text frame
@@ -149,10 +154,16 @@ Browser attach WS: binary frames = PTY bytes both ways; text frame
 ## Sandbox
 
 `images/Dockerfile`: `debian:bookworm-slim` + git, curl, node, bun,
-`@anthropic-ai/claude-code`; user `dev`; `WORKDIR /workspace`. Entry
-(`images/entry.sh`, executed in the PTY): clone → `checkout -b $BRANCH` →
-`exec claude "$PROMPT"`; on any failure, drop to an interactive shell so the
-user can see why. Container: no privileged, default bridge network, container
+`@anthropic-ai/claude-code`, `@openai/codex`, `opencode-ai`; user `dev`; `WORKDIR /workspace`.
+Entry (`images/entry.sh`, executed in the PTY): clone → `checkout -b $BRANCH` →
+launch the chosen agent → always fall through to `bash` so the user can inspect
+or `git push`. Empty prompt = `shell`. Gateway mapping (`LLM_BASE_URL` root, no `/v1`):
+
+| agent | how the gateway is wired |
+|-------|--------------------------|
+| claude | `ANTHROPIC_BASE_URL=$BASE`, `ANTHROPIC_AUTH_TOKEN=$LLM_API_KEY`, `ANTHROPIC_MODEL=$MODEL` |
+| codex | `~/.codex/config.toml` with `model_providers.gateway.base_url=$BASE/v1`, `env_key=OPENAI_API_KEY`, approvals off |
+| opencode | `~/.config/opencode/opencode.json` provider `gateway` (`@ai-sdk/openai-compatible`, `$BASE/v1`), `model=gateway/$MODEL` | Container: no privileged, default bridge network, container
 IP used for preview dialing.
 
 `SandboxDriver` interface (only `docker` implemented):
@@ -170,12 +181,15 @@ destroy(id): Promise<void>
 ```
 hosts    (id, name, fingerprint UNIQUE, status pending|approved|revoked,
           approve_code, max_sessions, last_seen_at, created_at)
-sessions (id, owner_id, host_id NULL, status, ended_reason NULL, repo,
-          branch, base_branch, prompt, image, idle_timeout_s,
-          created_at, started_at, ended_at, queue_pos NULL)
+sessions (id, owner_id, host_id NULL, status, ended_reason NULL, ended_detail NULL,
+          repo, branch, base_branch, prompt, image, idle_timeout_s,
+          agent, model NULL, llm_base_url NULL,
+          created_at, started_at, ended_at, unknown_since NULL)
 ```
 
-No terminal bytes. No secrets.
+No terminal bytes. No secrets. Queue position is derived from `created_at`
+among `queued` rows. Because secrets are never persisted, `queued` sessions cannot
+survive a CP restart: on boot they are marked `ended/failed` and must be recreated.
 
 ## Repo layout
 

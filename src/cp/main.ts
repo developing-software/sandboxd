@@ -9,7 +9,7 @@ import { PreviewProxy } from "./preview.ts";
 import { Api } from "./http.ts";
 import { logger } from "../shared/log.ts";
 
-const log = logger("cp");
+const log = logger("devagents");
 const cfg = loadConfig();
 const store = new Store(cfg.dbPath);
 const tokens = new Tokens(cfg.secret);
@@ -62,3 +62,4 @@ const server = Bun.serve<Data>({
 });
 
 log.info("listening", { url: server.url.toString(), public: cfg.publicUrl, preview: `*.${cfg.previewDomain}`, dev: cfg.dev, db: cfg.dbPath });
+log.info("defaults", { agent: cfg.defaultAgent, model: cfg.defaultModel, llm_base_url: cfg.llmBaseUrl, llm_api_key: cfg.llmApiKey ? "set" : "not set", image: cfg.defaultImage });

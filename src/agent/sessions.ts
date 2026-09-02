@@ -39,11 +39,14 @@ export class SessionManager {
       const env = {
         ...spec.env,
         TERM: "xterm-256color",
-        CP_SESSION_ID: spec.sid,
+        DEVAGENTS_SESSION_ID: spec.sid,
         REPO: spec.repo,
         BRANCH: spec.branch,
         BASE_BRANCH: spec.base_branch ?? "",
         PROMPT: spec.prompt,
+        AGENT: spec.agent,
+        MODEL: spec.model ?? "",
+        LLM_BASE_URL: spec.llm_base_url ?? "",
       };
       const size = { cols: 120, rows: 40 };
       const pty = await this.driver.attach(containerId, this.entry, env, size);

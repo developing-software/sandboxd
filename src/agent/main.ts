@@ -6,7 +6,7 @@ import { logger } from "../shared/log.ts";
 
 const log = logger("agent");
 const cfg = loadConfig();
-const driver = new DockerDriver(cfg.dockerSock);
+const driver = new DockerDriver(cfg.dockerSock, cfg.fingerprint);
 
 // v1 limitation: sandboxes from a previous daemon run can't be re-attached
 // (the PTY and ring buffer died with the process), so they are removed.

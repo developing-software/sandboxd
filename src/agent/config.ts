@@ -16,9 +16,9 @@ export interface AgentConfig {
 interface HostFile { secret: string; name?: string }
 
 export function loadConfig(env = process.env): AgentConfig {
-  const cpUrl = env.CP_URL ?? "ws://localhost:8080";
-  if (!cpUrl) throw new Error("CP_URL is required (e.g. ws://localhost:8080)");
-  const path = env.CP_AGENT_CONFIG ?? join(homedir(), ".config", "cp-agent", "host.json");
+  const cpUrl = env.DEVAGENTS_URL ?? "ws://localhost:8080";
+  if (!cpUrl) throw new Error("DEVAGENTS_URL is required (e.g. ws://localhost:8080)");
+  const path = env.DEVAGENTS_AGENT_CONFIG ?? join(homedir(), ".config", "devagents", "host.json");
 
   let file: HostFile;
   if (existsSync(path)) {
@@ -30,13 +30,13 @@ export function loadConfig(env = process.env): AgentConfig {
     chmodSync(path, 0o600);
   }
 
-  const entryRaw = env.CP_AGENT_ENTRY ?? "/usr/local/bin/cp-entry";
+  const entryRaw = env.DEVAGENTS_AGENT_ENTRY ?? "/usr/local/bin/devagents-entry";
   const entry = entryRaw.trim().startsWith("[") ? (JSON.parse(entryRaw) as string[]) : entryRaw.split(/\s+/);
 
   return {
     cpUrl: cpUrl.replace(/\/+$/, ""),
-    name: env.CP_AGENT_NAME ?? file.name ?? hostname(),
-    maxSessions: Number(env.CP_AGENT_MAX_SESSIONS ?? 4),
+    name: env.DEVAGENTS_AGENT_NAME ?? file.name ?? hostname(),
+    maxSessions: Number(env.DEVAGENTS_AGENT_MAX_SESSIONS ?? 4),
     dockerSock: env.DOCKER_SOCK ?? "/var/run/docker.sock",
     entry,
     secret: file.secret,

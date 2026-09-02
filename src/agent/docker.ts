@@ -29,7 +29,9 @@ export interface SandboxDriver {
 }
 
 export class DockerDriver implements SandboxDriver {
-  constructor(private sock = "/var/run/docker.sock") {}
+  /** `owner` scopes create/list/cleanup to this agent identity, so several agents
+   *  sharing one Docker host never touch each other's sandboxes. */
+  constructor(private sock = "/var/run/docker.sock", private owner = "unknown") {}
 
   private async api(method: string, path: string, body?: unknown): Promise<any> {
     const r = await fetch(`http://docker${path}`, {
@@ -53,16 +55,17 @@ export class DockerDriver implements SandboxDriver {
     const body = {
       Image: image,
       Cmd: ["sleep", "infinity"],
-      Labels: { "cp.managed": "1", "cp.sid": sid },
-      HostConfig: { Init: true },
+      Labels: { "devagents.managed": "1", "devagents.sid": sid, "devagents.host": this.owner },
+      // host.docker.internal lets a sandbox reach services on the host (e.g. a LiteLLM proxy on localhost).
+      HostConfig: { Init: true, ExtraHosts: ["host.docker.internal:host-gateway"] },
     };
     let res: any;
     try {
-      res = await this.api("POST", `/containers/create?name=cp-${sid}`, body);
+      res = await this.api("POST", `/containers/create?name=devagents-${sid}`, body);
     } catch (e) {
       if (!String(e).includes("-> 404")) throw e;
       await this.pull(image);
-      res = await this.api("POST", `/containers/create?name=cp-${sid}`, body);
+      res = await this.api("POST", `/containers/create?name=devagents-${sid}`, body);
     }
     await this.api("POST", `/containers/${res.Id}/start`);
     return res.Id as string;
@@ -155,14 +158,15 @@ export class DockerDriver implements SandboxDriver {
 
   async destroy(id: string): Promise<void> {
     await this.api("DELETE", `/containers/${id}?force=1&v=1`).catch((e) => {
-      if (!String(e).includes("-> 404")) throw e;
+      // 404: already gone. 409: removal already in progress. Both mean "done" for us.
+      if (!/-> (404|409)/.test(String(e))) throw e;
     });
   }
 
   async listManaged(): Promise<{ id: string; sid: string }[]> {
-    const filters = encodeURIComponent(JSON.stringify({ label: ["cp.managed=1"] }));
+    const filters = encodeURIComponent(JSON.stringify({ label: ["devagents.managed=1", `devagents.host=${this.owner}`] }));
     const list: any[] = (await this.api("GET", `/containers/json?all=1&filters=${filters}`)) ?? [];
-    return list.map((c) => ({ id: c.Id, sid: c.Labels?.["cp.sid"] ?? "?" }));
+    return list.map((c) => ({ id: c.Id, sid: c.Labels?.["devagents.sid"] ?? "?" }));
   }
 }
 

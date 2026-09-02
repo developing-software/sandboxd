@@ -28,7 +28,8 @@ function setup() {
   };
   let seq = 0;
   const session = (id: string) => store.insertSession({
-    id, owner_id: "o", repo: "r", branch: "b", base_branch: null, prompt: "p", image: "img", idle_timeout_s: 60, created_at: Date.now() + (seq++),
+    id, owner_id: "o", repo: "r", branch: "b", base_branch: null, prompt: "p", image: "img", idle_timeout_s: 60,
+    agent: "claude", model: null, llm_base_url: null, created_at: Date.now() + (seq++),
   });
   return { store, hub, sched, host, session };
 }

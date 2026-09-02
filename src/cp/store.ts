@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { EndReason } from "../protocol/messages.ts";
+import type { AgentKind, EndReason } from "../protocol/messages.ts";
 
 export type HostStatus = "pending" | "approved" | "revoked";
 export type SessionStatus = "queued" | "creating" | "running" | "ended";
@@ -17,6 +17,7 @@ export interface SessionRow {
   ended_reason: EndReason | null; ended_detail: string | null;
   repo: string; branch: string; base_branch: string | null; prompt: string;
   image: string; idle_timeout_s: number;
+  agent: AgentKind; model: string | null; llm_base_url: string | null;
   created_at: number; started_at: number | null; ended_at: number | null;
   /** Set on CP boot for sessions whose host hasn't re-reported them yet. */
   unknown_since: number | null;
@@ -40,11 +41,16 @@ export class Store {
         status TEXT NOT NULL, ended_reason TEXT, ended_detail TEXT,
         repo TEXT NOT NULL, branch TEXT NOT NULL, base_branch TEXT, prompt TEXT NOT NULL,
         image TEXT NOT NULL, idle_timeout_s INTEGER NOT NULL,
+        agent TEXT NOT NULL DEFAULT 'claude', model TEXT, llm_base_url TEXT,
         created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, unknown_since INTEGER
       );
       CREATE INDEX IF NOT EXISTS sessions_owner ON sessions(owner_id, created_at);
       CREATE INDEX IF NOT EXISTS sessions_status ON sessions(status, created_at);
     `);
+    // Additive migrations for databases created before these columns existed.
+    for (const col of ["agent TEXT NOT NULL DEFAULT 'claude'", "model TEXT", "llm_base_url TEXT"]) {
+      try { this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`); } catch {}
+    }
   }
 
   // ---- hosts ----
@@ -69,9 +75,9 @@ export class Store {
   // ---- sessions ----
   insertSession(s: Omit<SessionRow, "host_id" | "status" | "ended_reason" | "ended_detail" | "started_at" | "ended_at" | "unknown_since">): SessionRow {
     this.db.run(
-      `INSERT INTO sessions (id,owner_id,status,repo,branch,base_branch,prompt,image,idle_timeout_s,created_at)
-       VALUES (?,?,'queued',?,?,?,?,?,?,?)`,
-      [s.id, s.owner_id, s.repo, s.branch, s.base_branch, s.prompt, s.image, s.idle_timeout_s, s.created_at],
+      `INSERT INTO sessions (id,owner_id,status,repo,branch,base_branch,prompt,image,idle_timeout_s,agent,model,llm_base_url,created_at)
+       VALUES (?,?,'queued',?,?,?,?,?,?,?,?,?,?)`,
+      [s.id, s.owner_id, s.repo, s.branch, s.base_branch, s.prompt, s.image, s.idle_timeout_s, s.agent, s.model, s.llm_base_url, s.created_at],
     );
     return this.session(s.id)!;
   }
