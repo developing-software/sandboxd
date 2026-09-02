@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cp dev</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  body { font: 13px/1.4 ui-monospace, monospace; margin: 0; background: #111; color: #ddd; display: grid; grid-template-columns: 340px 1fr; height: 100vh; }
+  aside { padding: 12px; overflow: auto; border-right: 1px solid #333; }
+  main { display: flex; flex-direction: column; min-width: 0; }
+  #term { flex: 1; padding: 6px; background: #000; }
+  #bar { padding: 6px 12px; border-bottom: 1px solid #333; display: flex; gap: 8px; align-items: center; }
+  h3 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; color: #888; }
+  input, textarea, button, select { font: inherit; background: #222; color: #ddd; border: 1px solid #444; padding: 4px 6px; width: 100%; box-sizing: border-box; margin: 2px 0; }
+  button { cursor: pointer; width: auto; }
+  .row { display: flex; gap: 4px; align-items: center; }
+  .host, .sess { padding: 4px 0; border-bottom: 1px dashed #333; }
+  .on { color: #7c7; } .off { color: #c77; } .muted { color: #777; } .warn { color: #fc6; }
+  .host.pending { background: #2a2410; border: 1px solid #665; padding: 6px; margin: 4px 0; }
+  button.small { font-size: 11px; padding: 1px 6px; }
+  a { color: #8bf; }
+</style>
+</head>
+<body>
+<aside>
+  <h3>control plane</h3>
+  <input id="token" placeholder="CP_SERVICE_TOKEN (default: dev-token)">
+  <input id="owner" placeholder="owner_id" value="dev">
+  <h3>hosts</h3>
+  <div id="hosts" class="muted">…</div>
+  <h3>new session</h3>
+  <input id="repo" placeholder="https://github.com/org/repo.git">
+  <textarea id="prompt" rows="3" placeholder="prompt for claude"></textarea>
+  <input id="image" placeholder="image (blank = default)">
+  <input id="gitToken" placeholder="git token (optional)" type="password">
+  <input id="anthropicKey" placeholder="ANTHROPIC_API_KEY (optional)" type="password">
+  <button id="create">create</button>
+  <h3>sessions</h3>
+  <div id="sessions" class="muted">…</div>
+</aside>
+<main>
+  <div id="bar">
+    <span id="current" class="muted">no session attached</span>
+    <span style="flex:1"></span>
+    <input id="port" value="3000" style="width:70px">
+    <button id="preview">open preview</button>
+    <button id="kill">end session</button>
+  </div>
+  <div id="term"></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+window.onerror = (m) => { document.getElementById("hosts").textContent = "page error: " + m; };
+const $ = (id) => document.getElementById(id);
+$("token").value = localStorage.getItem("cp_token") || "dev-token";
+$("token").onchange = () => localStorage.setItem("cp_token", $("token").value);
+
+const api = async (method, path, body) => {
+  const r = await fetch(path, { method, headers: { authorization: "Bearer " + $("token").value, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+};
+
+const term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000, theme: { background: "#000" } });
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open($("term"));
+fit.fit();
+let ws = null, sid = null;
+const enc = new TextEncoder();
+
+async function attach(id) {
+  if (ws) ws.close();
+  sid = id;
+  term.reset();
+  $("current").textContent = id;
+  const { wss_url } = await api("POST", `/sessions/${id}/attach-token`, { owner_id: $("owner").value });
+  ws = new WebSocket(`${wss_url}&cols=${term.cols}&rows=${term.rows}`);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") { const m = JSON.parse(ev.data); term.write(`\r\n\x1b[31m[${m.type}: ${m.reason}]\x1b[0m\r\n`); }
+    else term.write(new Uint8Array(ev.data));
+  };
+  ws.onclose = () => term.write("\r\n\x1b[90m[disconnected]\x1b[0m\r\n");
+}
+term.onData((d) => { if (ws && ws.readyState === 1) ws.send(enc.encode(d)); });
+term.onBinary((d) => { if (ws && ws.readyState === 1) ws.send(Uint8Array.from(d, c => c.charCodeAt(0))); });
+term.onResize(({ cols, rows }) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols, rows })); });
+new ResizeObserver(() => fit.fit()).observe($("term"));
+
+let lastHosts = "";
+function renderHosts(hosts) {
+  const html = hosts.length ? hosts.map(h => h.status === "pending" ? `
+      <div class="host pending"><b>${h.name}</b> <span class="warn">⏳ waiting for approval</span><br>
+      <span class="muted">${h.id}</span>
+      <div class="row"><input placeholder="code from agent (e.g. K7QP-3M)" data-approve="${h.id}"><button onclick="approve('${h.id}')">approve</button></div>
+      </div>` : `
+      <div class="host"><b>${h.name}</b> <span class="${h.online ? "on" : "off"}">${h.online ? "●" : "○"}</span>
+      <span class="muted">${h.status}${h.capacity ? ` ${h.capacity.running}/${h.capacity.max}` : ""}</span><br>
+      <span class="muted">${h.id}</span>
+      ${h.status === "approved" ? `<button class="small" onclick="revoke('${h.id}')">revoke</button>` : ""}
+      </div>`).join("") : "<span class='muted'>no hosts yet — run: bun run dev:agent</span>";
+  if (html === lastHosts) return;                       // don't clobber the code input while typing
+  const typed = {};
+  document.querySelectorAll("[data-approve]").forEach(i => { typed[i.dataset.approve] = i.value; });
+  lastHosts = html;
+  $("hosts").innerHTML = html;
+  document.querySelectorAll("[data-approve]").forEach(i => { if (typed[i.dataset.approve]) i.value = typed[i.dataset.approve]; });
+}
+async function refresh() {
+  try {
+    const hosts = await api("GET", "/hosts");
+    renderHosts(hosts);
+    const sessions = await api("GET", `/sessions?owner_id=${encodeURIComponent($("owner").value)}`);
+    $("sessions").innerHTML = sessions.length ? sessions.slice(0, 20).map(s => `
+      <div class="sess"><a href="#" onclick="attach('${s.id}');return false">${s.id}</a>
+      <span class="${s.status === "running" ? "on" : "muted"}">${s.status}${s.queue_position ? ` #${s.queue_position}` : ""}${s.ended_reason ? ` (${s.ended_reason})` : ""}</span><br>
+      <span class="muted">${s.repo} → ${s.branch}</span></div>`).join("") : "<span class='muted'>none</span>";
+  } catch (e) { $("hosts").textContent = "error: " + e.message; }
+}
+window.approve = async (id) => {
+  const input = document.querySelector(`[data-approve="${id}"]`);
+  const code = input.value.trim().toUpperCase();
+  if (!code) { input.focus(); return; }
+  try { await api("POST", `/hosts/${id}/approve`, { code }); lastHosts = ""; } catch (e) { alert(e.message); input.select(); return; }
+  refresh();
+};
+window.revoke = async (id) => { if (confirm("Revoke this host?")) { await api("POST", `/hosts/${id}/revoke`); lastHosts = ""; refresh(); } };
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset?.approve) approve(e.target.dataset.approve); });
+window.attach = attach;
+$("create").onclick = async () => {
+  try {
+    const s = await api("POST", "/sessions", {
+      owner_id: $("owner").value, repo: $("repo").value, prompt: $("prompt").value,
+      image: $("image").value || undefined,
+      secrets: { git_token: $("gitToken").value || undefined, anthropic_api_key: $("anthropicKey").value || undefined },
+    });
+    term.write(`\r\n\x1b[90m[created ${s.id}: ${s.status}]\x1b[0m\r\n`);
+    const wait = setInterval(async () => {
+      const cur = await api("GET", `/sessions/${s.id}?owner_id=${encodeURIComponent($("owner").value)}`);
+      if (cur.status === "running") { clearInterval(wait); attach(s.id); }
+      if (cur.status === "ended") { clearInterval(wait); term.write(`\r\n\x1b[31m[ended: ${cur.ended_reason} ${cur.ended_detail || ""}]\x1b[0m\r\n`); }
+    }, 1000);
+  } catch (e) { alert(e.message); }
+  refresh();
+};
+$("kill").onclick = async () => { if (sid) { await api("DELETE", `/sessions/${sid}?owner_id=${encodeURIComponent($("owner").value)}`); refresh(); } };
+$("preview").onclick = async () => {
+  if (!sid) return;
+  try { const { url } = await api("POST", `/sessions/${sid}/preview-token`, { owner_id: $("owner").value, port: Number($("port").value) }); window.open(url, "_blank"); }
+  catch (e) { alert(e.message); }
+};
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>

@@ -1,8 +1,16 @@
 {
   "name": "testing-cp",
-  "module": "index.ts",
-  "type": "module",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "cp": "bun run src/cp/main.ts",
+    "agent": "bun run src/agent/main.ts",
+    "dev:cp": "CP_DEV=true CP_DB=.data/cp.db bun run src/cp/main.ts",
+    "dev:agent": "CP_URL=${CP_URL:-ws://localhost:8080} CP_AGENT_CONFIG=.data/host.json bun run src/agent/main.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "bun test",
+    "image": "docker build -t cp-sandbox:latest images"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
