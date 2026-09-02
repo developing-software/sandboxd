@@ -7,7 +7,7 @@ import type { Store } from "./store.ts";
 import { newApproveCode, newHostId } from "../shared/ids.ts";
 import { logger } from "../shared/log.ts";
 
-const log = logger("cp.hub");
+const log = logger("hub");
 
 export interface TunnelData { kind: "tunnel"; hostId: string | null }
 type WS = ServerWebSocket<TunnelData>;
