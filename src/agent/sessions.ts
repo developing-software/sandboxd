@@ -36,27 +36,16 @@ export class SessionManager {
     let containerId: string | undefined;
     try {
       containerId = await this.driver.create({ sid: spec.sid, image: spec.image });
-      const env = {
-        ...spec.env,
-        TERM: "xterm-256color",
-        DEVAGENTS_SESSION_ID: spec.sid,
-        REPO: spec.repo,
-        BRANCH: spec.branch,
-        BASE_BRANCH: spec.base_branch ?? "",
-        PROMPT: spec.prompt,
-        AGENT: spec.agent,
-        MODEL: spec.model ?? "",
-        LLM_BASE_URL: spec.llm_base_url ?? "",
-      };
+      const env = { ...spec.env, ...spec.secret_env, TERM: "xterm-256color", DEVAGENTS_SESSION_ID: spec.sid };
       const size = { cols: 120, rows: 40 };
-      const pty = await this.driver.attach(containerId, this.entry, env, size);
+      const pty = await this.driver.attach(containerId, spec.cmd ?? this.entry, env, size);
       const fanout = new PtyFanout();
       const run: Running = { spec, containerId, pty, fanout, size, ending: false };
       this.sessions.set(spec.sid, run);
       pty.onData((d) => fanout.emit(d));
       pty.onExit(() => { void this.end(spec.sid, "exited"); });
       // Secrets were handed to docker exec; drop our copy.
-      spec.env = {};
+      spec.secret_env = {};
       this.events.started(spec.sid);
       log.info("session started", { sid: spec.sid, container: containerId.slice(0, 12) });
     } catch (e) {

@@ -39,8 +39,11 @@
   #bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
   #bar .spacer { flex: 1; }
   #bar input { width: 80px; }
-  #term { flex: 1; min-height: 0; background: #000; padding: 6px; }
+  #term { flex: 1; min-height: 0; background: #000; padding: 6px; overscroll-behavior: contain; }
   .xterm { height: 100%; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  .hidden { display: none; }
 </style>
 </head>
 <body>
@@ -55,29 +58,50 @@
   <div id="hosts" class="muted">loading…</div>
 
   <h2>new session</h2>
-  <label>repository</label>
-  <input id="repo" placeholder="https://github.com/org/repo.git">
-  <label>prompt <span class="muted">(empty = shell only)</span></label>
-  <textarea id="prompt" placeholder="what should the agent do?"></textarea>
-  <div class="row">
-    <div><label>agent</label>
-      <select id="agent">
-        <option value="">auto</option>
-        <option value="claude">claude</option>
-        <option value="codex">codex</option>
-        <option value="opencode">opencode</option>
-        <option value="shell">shell</option>
-      </select></div>
-    <div><label>model</label><input id="model" placeholder="claude-sonnet-4-6"></div>
+  <label>preset</label>
+  <select id="preset">
+    <option value="coding-agent">coding-agent — clone a repo, run an agent</option>
+    <option value="custom">custom — image + command + env</option>
+  </select>
+
+  <div id="presetCoding">
+    <label>repository</label>
+    <input id="repo" placeholder="https://github.com/org/repo.git">
+    <label>prompt <span class="muted">(empty = shell only)</span></label>
+    <textarea id="prompt" placeholder="what should the agent do?"></textarea>
+    <div class="row">
+      <div><label>agent</label>
+        <select id="agent">
+          <option value="">auto</option>
+          <option value="claude">claude</option>
+          <option value="codex">codex</option>
+          <option value="opencode">opencode</option>
+          <option value="shell">shell</option>
+        </select></div>
+      <div><label>model</label><input id="model" placeholder="claude-sonnet-4-6"></div>
+    </div>
+    <label>llm base url <span class="muted">(default from control plane)</span></label>
+    <input id="llmBase" placeholder="https://llm.example.com">
+    <label>llm api key</label>
+    <input id="llmKey" type="password" placeholder="default from control plane">
+    <label>git token</label>
+    <input id="gitToken" type="password" placeholder="optional, for private repos / push">
   </div>
-  <label>llm base url <span class="muted">(default from control plane)</span></label>
-  <input id="llmBase" placeholder="https://llm.example.com">
-  <label>llm api key</label>
-  <input id="llmKey" type="password" placeholder="default from control plane">
-  <label>git token</label>
-  <input id="gitToken" type="password" placeholder="optional, for private repos / push">
+
+  <div id="presetCustom" class="hidden">
+    <label>command <span class="muted">(empty = image default entry)</span></label>
+    <input id="cmd" placeholder="bash -l   or   [&quot;python3&quot;,&quot;-m&quot;,&quot;http.server&quot;]">
+  </div>
+
   <label>image</label>
   <input id="image" placeholder="devagents-sandbox:latest">
+  <details>
+    <summary>env</summary>
+    <label>env <span class="muted">(KEY=value per line, stored)</span></label>
+    <textarea id="env" placeholder="NODE_ENV=development"></textarea>
+    <label>secret env <span class="muted">(KEY=value per line, never stored)</span></label>
+    <textarea id="secretEnv" placeholder="MY_API_KEY=…"></textarea>
+  </details>
   <div style="margin-top:10px"><button id="create" class="primary">create session</button></div>
   <div id="createMsg" class="msg"></div>
 
@@ -122,12 +146,23 @@ async function api(method, path, body) {
 }
 
 // ---- terminal ----
-const term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000, theme: { background: "#000000" } });
+const term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 10000, scrollSensitivity: 2, theme: { background: "#000000" } });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
 term.open($("term"));
 fit.fit();
-new ResizeObserver(() => { try { fit.fit(); } catch {} }).observe($("term"));
+// Refit at most once per frame and only when the geometry actually changed: every
+// fit that changes rows/cols becomes a SIGWINCH in the sandbox, and TUI agents
+// (Claude Code, Codex) redraw their whole frame on each one, which yanks the scroll.
+let fitQueued = false;
+function refit() {
+  if (fitQueued) return; fitQueued = true;
+  requestAnimationFrame(() => {
+    fitQueued = false;
+    try { const d = fit.proposeDimensions(); if (d && (d.cols !== term.cols || d.rows !== term.rows)) fit.fit(); } catch {}
+  });
+}
+new ResizeObserver(refit).observe($("term"));
 
 let ws = null, sid = null;
 const enc = new TextEncoder();
@@ -205,12 +240,35 @@ function renderSessions(sessions) {
     return `
     <div class="card ${s.id === sid ? "active" : ""}">
       <a href="#" onclick="attach('${s.id}');return false">${s.id}</a><span class="pill ${pill}">${status}</span>
-      <div class="id">${s.agent}${s.model ? " / " + s.model : ""} · ${s.repo} → ${s.branch}</div>
+      <div class="id">${describe(s)}</div>
       ${s.ended_detail ? `<div class="id">${s.ended_detail}</div>` : ""}
     </div>`;
   }).join("") : `<div class="muted">none yet</div>`;
 }
 window.attach = attach;
+function describe(s) {
+  const e = s.env || {};
+  if (s.preset === "coding-agent") return `${e.AGENT}${e.MODEL ? " / " + e.MODEL : ""} · ${e.REPO} → ${e.BRANCH}`;
+  return `${s.preset} · ${s.cmd ? s.cmd.join(" ") : "default entry"} · ${s.image}`;
+}
+function parseEnv(text) {
+  const out = {};
+  for (const line of text.split("\n")) {
+    const t = line.trim(); if (!t || t.startsWith("#")) continue;
+    const i = t.indexOf("="); if (i < 1) throw new Error(`env: expected KEY=value, got "${t}"`);
+    out[t.slice(0, i).trim()] = t.slice(i + 1);
+  }
+  return out;
+}
+function parseCmd(text) {
+  const t = text.trim(); if (!t) return undefined;
+  return t.startsWith("[") ? JSON.parse(t) : t.split(/\s+/);
+}
+$("preset").addEventListener("change", () => {
+  const coding = $("preset").value === "coding-agent";
+  $("presetCoding").classList.toggle("hidden", !coding);
+  $("presetCustom").classList.toggle("hidden", coding);
+});
 
 async function refresh() {
   try {
@@ -224,16 +282,22 @@ async function refresh() {
 $("create").onclick = async () => {
   $("createMsg").textContent = "";
   try {
-    const s = await api("POST", "/sessions", {
-      owner_id: owner(),
+    const preset = $("preset").value;
+    const body = {
+      owner_id: owner(), preset,
+      image: $("image").value.trim() || undefined,
+      env: parseEnv($("env").value), secret_env: parseEnv($("secretEnv").value),
+    };
+    if (preset === "coding-agent") Object.assign(body, {
       repo: $("repo").value.trim(),
       prompt: $("prompt").value,
       agent: $("agent").value || undefined,
       model: $("model").value.trim() || undefined,
-      image: $("image").value.trim() || undefined,
       llm: { base_url: $("llmBase").value.trim() || undefined, api_key: $("llmKey").value || undefined },
       secrets: { git_token: $("gitToken").value || undefined },
     });
+    else body.cmd = parseCmd($("cmd").value);
+    const s = await api("POST", "/sessions", body);
     note(`created ${s.id} (${s.status})`);
     refresh();
     const poll = setInterval(async () => {

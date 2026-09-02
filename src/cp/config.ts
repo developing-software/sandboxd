@@ -1,5 +1,3 @@
-import { AGENT_KINDS, type AgentKind } from "../protocol/messages.ts";
-
 export interface CpConfig {
   port: number;
   serviceToken: string;
@@ -7,14 +5,16 @@ export interface CpConfig {
   publicUrl: string;       // http(s)://cp.example.com  (what browsers use)
   previewDomain: string;   // preview.cp.example.com   (wildcard)
   defaultImage: string;
-  defaultAgent: AgentKind;
-  defaultModel: string | null;
-  // Operator-level gateway defaults; a session may override them. api key stays in process memory only.
-  llmBaseUrl: string | null;
-  llmApiKey: string | null;
+  /** Operator-level env injected into every sandbox at placement time (never persisted).
+   *  From DEVAGENTS_SANDBOX_ENV_<NAME>=value, plus the LLM_BASE_URL / LLM_API_KEY shorthands. */
+  sandboxEnv: Record<string, string>;
+  /** Defaults for the built-in `coding-agent` preset. */
+  codingAgent: { defaultAgent: string; defaultModel: string | null; codexModel: string | null };
   dbPath: string;
   dev: boolean;
 }
+
+const SANDBOX_ENV_PREFIX = "DEVAGENTS_SANDBOX_ENV_";
 
 export function loadConfig(env = process.env): CpConfig {
   let serviceToken = env.DEVAGENTS_SERVICE_TOKEN;
@@ -24,6 +24,17 @@ export function loadConfig(env = process.env): CpConfig {
   }
   const port = Number(env.DEVAGENTS_PORT ?? 8080);
   const publicUrl = (env.DEVAGENTS_PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/+$/, "");
+
+  const sandboxEnv: Record<string, string> = {};
+  // Plain LLM_* are accepted too, since that is what people naturally export.
+  const llmBase = (env.DEVAGENTS_LLM_BASE_URL || env.LLM_BASE_URL)?.replace(/\/+$/, "");
+  if (llmBase) sandboxEnv.LLM_BASE_URL = llmBase;
+  const llmKey = env.DEVAGENTS_LLM_API_KEY || env.LLM_API_KEY;
+  if (llmKey) sandboxEnv.LLM_API_KEY = llmKey;
+  for (const [k, v] of Object.entries(env)) {
+    if (k.startsWith(SANDBOX_ENV_PREFIX) && v !== undefined) sandboxEnv[k.slice(SANDBOX_ENV_PREFIX.length)] = v;
+  }
+
   return {
     port,
     serviceToken,
@@ -31,11 +42,13 @@ export function loadConfig(env = process.env): CpConfig {
     publicUrl,
     previewDomain: env.DEVAGENTS_PREVIEW_DOMAIN ?? "preview.localhost",
     defaultImage: env.DEVAGENTS_DEFAULT_IMAGE ?? "devagents-sandbox:latest",
-    defaultAgent: (AGENT_KINDS as string[]).includes(env.DEVAGENTS_DEFAULT_AGENT ?? "") ? (env.DEVAGENTS_DEFAULT_AGENT as AgentKind) : "claude",
-    defaultModel: env.DEVAGENTS_DEFAULT_MODEL || "claude-sonnet-4-6",
-    // Plain LLM_* are accepted too, since that is what people naturally export.
-    llmBaseUrl: (env.DEVAGENTS_LLM_BASE_URL || env.LLM_BASE_URL)?.replace(/\/+$/, "") || null,
-    llmApiKey: env.DEVAGENTS_LLM_API_KEY || env.LLM_API_KEY || null,
+    sandboxEnv,
+    codingAgent: {
+      defaultAgent: env.DEVAGENTS_DEFAULT_AGENT || "claude",
+      defaultModel: env.DEVAGENTS_DEFAULT_MODEL || "claude-sonnet-4-6",
+      // Codex only speaks the Responses API; through LiteLLM that path is OpenAI-models-only in practice.
+      codexModel: env.DEVAGENTS_CODEX_MODEL || null,
+    },
     dbPath: env.DEVAGENTS_DB ?? "cp.db",
     dev: env.DEVAGENTS_DEV === "true" || env.DEVAGENTS_DEV === "1",
   };

@@ -78,8 +78,14 @@ export class DockerDriver implements SandboxDriver {
     });
     const execId = exec.Id as string;
 
-    let dataCb: (d: Uint8Array) => void = () => {};
-    let exitCb: () => void = () => {};
+    // Bytes (or an exit) can arrive before the caller registers its handlers, e.g. a
+    // command that prints immediately. Buffer them instead of dropping them.
+    let dataCb: ((d: Uint8Array) => void) | null = null;
+    let exitCb: (() => void) | null = null;
+    const early: Uint8Array[] = [];
+    let exited = false;
+    const emit = (d: Uint8Array) => { if (dataCb) dataCb(d); else early.push(d.slice()); };
+    const exit = () => { exited = true; exitCb?.(); };
     let headerDone = false;
     let pending = new Uint8Array(0);
     const opened = Promise.withResolvers<Socket<undefined>>();
@@ -113,10 +119,10 @@ export class DockerDriver implements SandboxDriver {
             pending = new Uint8Array(0);
             if (chunk.length === 0) return;
           }
-          dataCb(chunk);
+          emit(chunk);
         },
-        close() { exitCb(); },
-        error(_, e) { opened.reject(e); exitCb(); },
+        close() { exit(); },
+        error(_, e) { opened.reject(e); exit(); },
       },
     });
     await opened.promise;
@@ -126,8 +132,8 @@ export class DockerDriver implements SandboxDriver {
       write: (d) => { socket.write(d); },
       resize: async (sz) => { await this.api("POST", `/exec/${execId}/resize?h=${sz.rows}&w=${sz.cols}`).catch(() => {}); },
       close: () => socket.end(),
-      onData: (cb) => { dataCb = cb; },
-      onExit: (cb) => { exitCb = cb; },
+      onData: (cb) => { dataCb = cb; for (const d of early.splice(0)) cb(d); },
+      onExit: (cb) => { exitCb = cb; if (exited) cb(); },
     };
   }
 

@@ -8,7 +8,7 @@ import type { Scheduler } from "./scheduler.ts";
 import type { Tokens } from "./tokens.ts";
 import { HttpError, badRequest, conflict, notFound, unauthorized } from "../shared/errors.ts";
 import { newSessionId } from "../shared/ids.ts";
-import { AGENT_KINDS, type AgentKind } from "../protocol/messages.ts";
+import { PRESETS, PRESET_NAMES, validateEnv, type CodingAgentFields } from "./presets.ts";
 import type { AttachData } from "./attach.ts";
 import { logger } from "../shared/log.ts";
 
@@ -17,13 +17,19 @@ const log = logger("api");
 const ATTACH_TTL_MS = 60_000;
 const PREVIEW_TTL_MS = 10 * 60_000;
 
-export interface CreateSessionBody {
-  owner_id: string; repo: string; prompt: string;
-  base_branch?: string; branch?: string; image?: string; idle_timeout_s?: number;
-  agent?: AgentKind; model?: string;
-  /** Gateway override for this session (e.g. LiteLLM). api_key is a secret; base_url is not. */
-  llm?: { base_url?: string; api_key?: string };
-  secrets?: { git_token?: string; anthropic_api_key?: string };
+/** Core fields are generic; `preset` decides which extra fields mean something.
+ *  Default preset: coding-agent when `repo` is given, custom otherwise. */
+export interface CreateSessionBody extends CodingAgentFields {
+  owner_id: string;
+  preset?: string;
+  image?: string;
+  idle_timeout_s?: number;
+  /** Command exec'd in the PTY. Omit for the image's default entry. */
+  cmd?: string[];
+  /** Extra env (non-secret, persisted) merged over what the preset produced. */
+  env?: Record<string, string>;
+  /** Extra secret env (never persisted) merged over what the preset produced. */
+  secret_env?: Record<string, string>;
 }
 
 export class Api {
@@ -122,27 +128,23 @@ export class Api {
 
   private createSession(b: CreateSessionBody): Response {
     if (!b.owner_id || typeof b.owner_id !== "string") throw badRequest("owner_id is required");
-    if (!b.repo || typeof b.repo !== "string") throw badRequest("repo is required");
-    if (typeof b.prompt !== "string") throw badRequest("prompt is required");
     const id = newSessionId();
     const idle = Number(b.idle_timeout_s ?? 1800);
     if (!Number.isFinite(idle) || idle < 60) throw badRequest("idle_timeout_s must be >= 60");
-    const agent: AgentKind = b.agent ?? (b.prompt.trim() ? this.cfg.defaultAgent : "shell");
-    if (!AGENT_KINDS.includes(agent)) throw badRequest(`agent must be one of ${AGENT_KINDS.join(", ")}`);
-    const llmBase = (b.llm?.base_url?.trim() || this.cfg.llmBaseUrl || "").replace(/\/+$/, "") || null;
-    if (llmBase && !/^https?:\/\//.test(llmBase)) throw badRequest("llm.base_url must be http(s)");
+    const preset = b.preset ?? (b.repo ? "coding-agent" : "custom");
+    const expand = PRESETS[preset] ?? (() => { throw badRequest(`preset must be one of ${PRESET_NAMES.join(", ")}`); })();
+    if (b.cmd !== undefined && (!Array.isArray(b.cmd) || b.cmd.length === 0 || !b.cmd.every((c) => typeof c === "string"))) {
+      throw badRequest("cmd must be a non-empty array of strings");
+    }
+    const expanded = expand(id, b, this.cfg);
+    const env = { ...expanded.env, ...validateEnv("env", b.env) };
+    const secret_env = { ...expanded.secret_env, ...validateEnv("secret_env", b.secret_env) };
     const row = this.store.insertSession({
-      id, owner_id: b.owner_id, repo: b.repo, prompt: b.prompt,
-      agent, model: b.model?.trim() || this.cfg.defaultModel, llm_base_url: llmBase,
-      branch: b.branch?.trim() || `devagents/${id}`, base_branch: b.base_branch?.trim() || null,
-      image: b.image?.trim() || this.cfg.defaultImage, idle_timeout_s: idle, created_at: Date.now(),
+      id, owner_id: b.owner_id, preset, image: b.image?.trim() || this.cfg.defaultImage,
+      cmd: b.cmd ? JSON.stringify(b.cmd) : null, env: JSON.stringify(env),
+      idle_timeout_s: idle, created_at: Date.now(),
     });
-    const env: Record<string, string> = {};
-    if (b.secrets?.git_token) env.GIT_TOKEN = b.secrets.git_token;
-    if (b.secrets?.anthropic_api_key) env.ANTHROPIC_API_KEY = b.secrets.anthropic_api_key;
-    const llmKey = b.llm?.api_key || this.cfg.llmApiKey;
-    if (llmKey) env.LLM_API_KEY = llmKey;
-    this.sched.submit(row, env);
+    this.sched.submit(row, secret_env);
     return json(this.view(this.store.session(id)!), 201);
   }
 
@@ -159,8 +161,7 @@ export class Api {
       host_online: s.host_id ? this.hub.isOnline(s.host_id) : null,
       queue_position: s.status === "queued" ? this.sched.queuePosition(s.id) : null,
       ended_reason: s.ended_reason, ended_detail: s.ended_detail,
-      repo: s.repo, branch: s.branch, base_branch: s.base_branch, prompt: s.prompt, image: s.image,
-      agent: s.agent, model: s.model, llm_base_url: s.llm_base_url,
+      preset: s.preset, image: s.image, cmd: s.cmd ? JSON.parse(s.cmd) : null, env: JSON.parse(s.env),
       idle_timeout_s: s.idle_timeout_s, created_at: s.created_at, started_at: s.started_at, ended_at: s.ended_at,
     };
   }

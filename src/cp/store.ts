@@ -1,7 +1,10 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { AgentKind, EndReason } from "../protocol/messages.ts";
+import type { EndReason } from "../protocol/messages.ts";
+
+/** Bump when the schema changes. There are no migrations: a db with another version is refused. */
+const SCHEMA_VERSION = 2;
 
 export type HostStatus = "pending" | "approved" | "revoked";
 export type SessionStatus = "queued" | "creating" | "running" | "ended";
@@ -15,9 +18,12 @@ export interface HostRow {
 export interface SessionRow {
   id: string; owner_id: string; host_id: string | null; status: SessionStatus;
   ended_reason: EndReason | null; ended_detail: string | null;
-  repo: string; branch: string; base_branch: string | null; prompt: string;
-  image: string; idle_timeout_s: number;
-  agent: AgentKind; model: string | null; llm_base_url: string | null;
+  preset: string; image: string;
+  /** JSON string[] or null (= daemon default entry). */
+  cmd: string | null;
+  /** JSON object; non-secret env only. */
+  env: string;
+  idle_timeout_s: number;
   created_at: number; started_at: number | null; ended_at: number | null;
   /** Set on CP boot for sessions whose host hasn't re-reported them yet. */
   unknown_since: number | null;
@@ -30,6 +36,11 @@ export class Store {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path, { create: true });
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+    const hasTables = !!this.db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'").get();
+    if (hasTables && version !== SCHEMA_VERSION) {
+      throw new Error(`${path}: schema version ${version}, expected ${SCHEMA_VERSION}. No migrations in v1: delete the db file and restart.`);
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS hosts (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, fingerprint TEXT NOT NULL UNIQUE,
@@ -39,18 +50,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, host_id TEXT REFERENCES hosts(id),
         status TEXT NOT NULL, ended_reason TEXT, ended_detail TEXT,
-        repo TEXT NOT NULL, branch TEXT NOT NULL, base_branch TEXT, prompt TEXT NOT NULL,
-        image TEXT NOT NULL, idle_timeout_s INTEGER NOT NULL,
-        agent TEXT NOT NULL DEFAULT 'claude', model TEXT, llm_base_url TEXT,
+        preset TEXT NOT NULL, image TEXT NOT NULL, cmd TEXT, env TEXT NOT NULL, idle_timeout_s INTEGER NOT NULL,
         created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, unknown_since INTEGER
       );
       CREATE INDEX IF NOT EXISTS sessions_owner ON sessions(owner_id, created_at);
       CREATE INDEX IF NOT EXISTS sessions_status ON sessions(status, created_at);
     `);
-    // Additive migrations for databases created before these columns existed.
-    for (const col of ["agent TEXT NOT NULL DEFAULT 'claude'", "model TEXT", "llm_base_url TEXT"]) {
-      try { this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`); } catch {}
-    }
+    this.db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
   }
 
   // ---- hosts ----
@@ -75,9 +81,9 @@ export class Store {
   // ---- sessions ----
   insertSession(s: Omit<SessionRow, "host_id" | "status" | "ended_reason" | "ended_detail" | "started_at" | "ended_at" | "unknown_since">): SessionRow {
     this.db.run(
-      `INSERT INTO sessions (id,owner_id,status,repo,branch,base_branch,prompt,image,idle_timeout_s,agent,model,llm_base_url,created_at)
-       VALUES (?,?,'queued',?,?,?,?,?,?,?,?,?,?)`,
-      [s.id, s.owner_id, s.repo, s.branch, s.base_branch, s.prompt, s.image, s.idle_timeout_s, s.agent, s.model, s.llm_base_url, s.created_at],
+      `INSERT INTO sessions (id,owner_id,status,preset,image,cmd,env,idle_timeout_s,created_at)
+       VALUES (?,?,'queued',?,?,?,?,?,?)`,
+      [s.id, s.owner_id, s.preset, s.image, s.cmd, s.env, s.idle_timeout_s, s.created_at],
     );
     return this.session(s.id)!;
   }

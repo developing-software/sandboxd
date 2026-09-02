@@ -9,8 +9,12 @@ self-hosted machines and supervise them through a browser terminal.
 
 - A **host** is a real machine you own, running `devagents`. It dials **out** to
   the control plane over one persistent WebSocket; nothing inbound is required.
-- A **session** is one agent task: a fresh Docker sandbox, a fresh clone of a
-  repo on its own branch, `claude "<prompt>"` started in a PTY. Disposable.
+- A **session** is one sandbox: a fresh Docker container from an image, one
+  command started in a PTY with some env, gone when it ends. Disposable.
+  The core does not know what runs inside. **Presets** on the CP turn a
+  friendly request (repo + prompt + agent) into image/cmd/env; the built-in
+  `coding-agent` preset is the reason this service exists, but any image that
+  honours the sandbox contract below is a valid use case.
 - The control plane (**CP**) is the only API. It schedules sessions onto hosts,
   relays terminal bytes, proxies preview ports, and stores metadata. It is a
   single instance backed by SQLite and has no users of its own.
@@ -38,6 +42,7 @@ self-hosted machines and supervise them through a browser terminal.
 | 16 | `Bun.serve` + `bun:sqlite`, zero runtime deps | Hono / Elysia |
 | 17 | `/dev` xterm.js page behind `DEVAGENTS_DEV=true` | No UI; real Svelte frontend |
 | 18 | One package, `src/{protocol,shared,cp,agent,dev}` | Bun workspaces |
+| 20 | Generic core (`image, cmd, env, secret_env`) + CP-side presets; the image is the plugin | Agent kinds baked into the protocol and daemon; driver plugins in the daemon |
 
 ## Topology
 
@@ -68,9 +73,9 @@ POST /sessions ──► queued ──► creating ──► running ──► e
 - **Placement:** online + approved host with most free slots (`max - running`
   from heartbeat). None → `queued`, FIFO, persisted. Drains on every heartbeat
   and on every session end.
-- **Creating:** CP sends `session.create` with repo, branch, prompt, image,
-  idle timeout, and secrets. Daemon: create container → exec entry script in a
-  PTY → `session.started`.
+- **Creating:** CP sends `session.create` with image, cmd, env, secret_env and
+  idle timeout. Daemon: create container → exec cmd (or the image's default
+  entry) in a PTY with that env → `session.started`.
 - **Running:** daemon owns the PTY regardless of viewers. Viewers attach via CP;
   attach = ring-buffer replay, then live. N viewers fan out; last resize wins.
 - **Idle:** daemon tracks `last_activity` = last byte in *or* out of the PTY.
@@ -94,9 +99,12 @@ POST /sessions ──► queued ──► creating ──► running ──► e
 - **Browser → preview:** parent calls `POST /sessions/:id/preview-token`
   (10 m). Browser hits `https://3000-s_x.preview.<domain>/?t=…`; CP verifies,
   sets a signed, subdomain-scoped cookie, redirects to `/`.
-- **Secrets:** `secrets.git_token`, `secrets.anthropic_api_key`, `llm.api_key` on create.
-  Forwarded to the daemon, injected as env into the container. Not written to
-  SQLite, not logged, dropped from memory after `docker create`.
+- **Secrets:** anything in `secret_env` (the coding-agent preset puts
+  `secrets.git_token`, `secrets.anthropic_api_key`, `llm.api_key` there).
+  Forwarded to the daemon, injected as env into the PTY process. Not written to
+  SQLite, not logged, dropped from memory after `docker exec`. Operator-level
+  `DEVAGENTS_SANDBOX_ENV_*` (and the `LLM_BASE_URL` / `LLM_API_KEY` shorthands)
+  travel the same path and are never persisted either.
 - **Enrollment:** daemon generates `host_secret` on first run
   (`~/.config/devagents/host.json`, 0600). `hello{name, fingerprint}` where
   `fingerprint = sha256(secret)`. Unknown fingerprint → CP inserts
@@ -116,7 +124,7 @@ session or one proxied TCP connection for a preview port.
 | host→cp | `hello{name, fingerprint, running: sid[], max_sessions}` |
 | cp→host | `hello.ok{host_id}` · `hello.pending{code}` · `hello.rejected` |
 | host→cp | `heartbeat{running, max}` every 10 s |
-| cp→host | `session.create{sid, repo, branch, base_branch, prompt, image, idle_timeout_s, env}` |
+| cp→host | `session.create{sid, image, cmd | null, idle_timeout_s, env, secret_env}` |
 | host→cp | `session.started{sid}` · `session.ended{sid, reason}` |
 | cp→host | `session.destroy{sid}` |
 | cp→host | `pty.open{sid, stream, cols, rows}` · `pty.resize{sid, cols, rows}` · `pty.close{stream}` |
@@ -132,12 +140,20 @@ Stream ids are allocated by the CP (odd) and never reused within a connection.
 GET    /hosts                          list (status, online, running/max)
 POST   /hosts/:id/approve   {code}
 POST   /hosts/:id/revoke
-POST   /sessions            {owner_id, repo, prompt, base_branch?, branch?, image?, idle_timeout_s?,
-                             agent?: claude|codex|opencode|shell, model?,
-                             llm?: {base_url?, api_key?},          // OpenAI/Anthropic-compatible gateway (LiteLLM)
-                             secrets?: {git_token?, anthropic_api_key?}}
-                            defaults: agent = DEVAGENTS_DEFAULT_AGENT (shell if prompt empty),
-                                      model = DEVAGENTS_DEFAULT_MODEL (claude-sonnet-4-6), llm = DEVAGENTS_LLM_BASE_URL / DEVAGENTS_LLM_API_KEY (or plain LLM_BASE_URL / LLM_API_KEY)
+POST   /sessions            core:   {owner_id, preset?, image?, cmd?: string[], env?, secret_env?, idle_timeout_s?}
+                            preset "coding-agent" (default when repo is given) adds:
+                                    {repo, prompt, base_branch?, branch?, agent?: claude|codex|opencode|shell, model?,
+                                     llm?: {base_url?, api_key?},          // OpenAI/Anthropic-compatible gateway (LiteLLM)
+                                     secrets?: {git_token?, anthropic_api_key?}}
+                                    → env REPO BRANCH BASE_BRANCH PROMPT AGENT MODEL [LLM_BASE_URL]
+                                      secret_env [GIT_TOKEN ANTHROPIC_API_KEY LLM_API_KEY]
+                                    defaults: agent = DEVAGENTS_DEFAULT_AGENT (shell if prompt empty),
+                                              model = DEVAGENTS_DEFAULT_MODEL (claude-sonnet-4-6), DEVAGENTS_CODEX_MODEL for codex
+                            preset "custom" (default otherwise): nothing implied.
+                            caller env/secret_env are merged over the preset's. TERM and DEVAGENTS_SESSION_ID are reserved.
+                            Operator defaults for every sandbox: DEVAGENTS_SANDBOX_ENV_<NAME>=value,
+                            shorthands DEVAGENTS_LLM_BASE_URL / DEVAGENTS_LLM_API_KEY (or LLM_BASE_URL / LLM_API_KEY).
+                            Precedence: secret_env > env > operator.
 GET    /sessions?owner_id=
 GET    /sessions/:id
 DELETE /sessions/:id
@@ -153,6 +169,15 @@ Browser attach WS: binary frames = PTY bytes both ways; text frame
 
 ## Sandbox
 
+**Contract with any image:** the daemon starts the container with the image's
+own entrypoint kept idle (`sleep infinity`), then execs `cmd` (default:
+`/usr/local/bin/devagents-entry`, overridable per host with
+`DEVAGENTS_AGENT_ENTRY`) in a PTY with the session's env plus `TERM` and
+`DEVAGENTS_SESSION_ID`. When that process exits the session ends (`exited`).
+Any TCP port it listens on can be previewed. That is all the daemon assumes;
+what the env means is between the caller and the image.
+
+The default image implements the `coding-agent` preset.
 `images/Dockerfile`: `debian:bookworm-slim` + git, curl, node, bun,
 `@anthropic-ai/claude-code`, `@openai/codex`, `opencode-ai`; user `dev`; `WORKDIR /workspace`.
 Entry (`images/entry.sh`, executed in the PTY): clone → `checkout -b $BRANCH` →
@@ -182,9 +207,9 @@ destroy(id): Promise<void>
 hosts    (id, name, fingerprint UNIQUE, status pending|approved|revoked,
           approve_code, max_sessions, last_seen_at, created_at)
 sessions (id, owner_id, host_id NULL, status, ended_reason NULL, ended_detail NULL,
-          repo, branch, base_branch, prompt, image, idle_timeout_s,
-          agent, model NULL, llm_base_url NULL,
+          preset, image, cmd NULL (JSON string[]), env (JSON object), idle_timeout_s,
           created_at, started_at, ended_at, unknown_since NULL)
+PRAGMA user_version = 2   -- no migrations in v1; another version is refused at boot
 ```
 
 No terminal bytes. No secrets. Queue position is derived from `created_at`
@@ -196,11 +221,11 @@ survive a CP restart: on boot they are marked `ended/failed` and must be recreat
 ```
 src/protocol/   messages.ts  framing.ts        shared types + binary framing
 src/shared/     ids.ts  errors.ts  log.ts
-src/cp/         main.ts  http.ts  tunnel.ts  scheduler.ts  store.ts
+src/cp/         main.ts  http.ts  presets.ts  tunnel.ts  scheduler.ts  store.ts
                 attach.ts  preview.ts  tokens.ts
 src/agent/      main.ts  config.ts  tunnel.ts  docker.ts  pty.ts  sessions.ts
 src/dev/        index.html
-images/         Dockerfile  entry.sh
+images/         Dockerfile  entry.sh  agent-setup.sh  git-askpass.sh
 ```
 
 Scripts: `bun run cp`, `bun run agent`, `bun test`.

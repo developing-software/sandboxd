@@ -68,7 +68,7 @@ function parseCookies(h: string | null): Record<string, string> {
 
 const HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer"]);
 
-async function proxyOnce(
+export async function proxyOnce(
   req: Request, port: number,
   dial: (sub: { onData(d: Uint8Array): void; onClose(): void }) => Promise<{ write(d: Uint8Array): void; close(): void }>,
 ): Promise<Response> {
@@ -90,6 +90,9 @@ async function proxyOnce(
 
   const parser = new ResponseParser();
   const headers = Promise.withResolvers<{ status: number; headers: Headers }>();
+  // A failed dial rejects `dial()` *and* fires onClose, which rejects this promise
+  // after we have already returned 502. Mark it handled or the process dies.
+  headers.promise.catch(() => {});
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   let finished = false;
   const finish = () => { if (finished) return; finished = true; try { controller?.close(); } catch {} };

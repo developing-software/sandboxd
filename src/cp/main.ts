@@ -10,6 +10,9 @@ import { Api } from "./http.ts";
 import { logger } from "../shared/log.ts";
 
 const log = logger("devagents");
+// A stray rejection in a proxy or tunnel callback must never take the control plane down.
+process.on("unhandledRejection", (e) => log.error("unhandled rejection", { err: String(e) }));
+process.on("uncaughtException", (e) => log.error("uncaught exception", { err: String(e), stack: e?.stack }));
 const cfg = loadConfig();
 const store = new Store(cfg.dbPath);
 const tokens = new Tokens(cfg.secret);
@@ -21,7 +24,7 @@ const hub = new HostHub(store, {
   sessionStarted: (sid) => sched.onSessionStarted(sid),
   sessionEnded: (sid, reason, detail) => sched.onSessionEnded(sid, reason, detail),
 });
-sched = new Scheduler(store, hub);
+sched = new Scheduler(store, hub, cfg.sandboxEnv);
 sched.boot();
 
 const attach = new AttachBridge(store, hub);
@@ -62,4 +65,4 @@ const server = Bun.serve<Data>({
 });
 
 log.info("listening", { url: server.url.toString(), public: cfg.publicUrl, preview: `*.${cfg.previewDomain}`, dev: cfg.dev, db: cfg.dbPath });
-log.info("defaults", { agent: cfg.defaultAgent, model: cfg.defaultModel, llm_base_url: cfg.llmBaseUrl, llm_api_key: cfg.llmApiKey ? "set" : "not set", image: cfg.defaultImage });
+log.info("defaults", { image: cfg.defaultImage, sandbox_env: Object.keys(cfg.sandboxEnv), ...cfg.codingAgent });

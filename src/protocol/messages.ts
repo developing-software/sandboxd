@@ -2,24 +2,18 @@
 
 export type EndReason = "closed" | "idle" | "failed" | "lost" | "exited";
 
-export type AgentKind = "claude" | "codex" | "opencode" | "shell";
-export const AGENT_KINDS: AgentKind[] = ["claude", "codex", "opencode", "shell"];
-
+/** What the CP asks a host to run. Deliberately generic: the CP knows nothing
+ *  about repos, agents or models; presets on the CP side turn those into env. */
 export interface SessionSpec {
   sid: string;
-  repo: string;
-  /** Which harness the entry script launches in the PTY. */
-  agent: AgentKind;
-  model: string | null;
-  /** OpenAI/Anthropic-compatible gateway root (e.g. a LiteLLM proxy). Not a secret. */
-  llm_base_url: string | null;
-  branch: string;
-  base_branch: string | null;
-  prompt: string;
   image: string;
+  /** Command exec'd in the PTY. null = the daemon's default entry (DEVAGENTS_AGENT_ENTRY). */
+  cmd: string[] | null;
   idle_timeout_s: number;
-  /** Injected into the PTY process only. Never persisted by either side. */
+  /** Non-secret env. Persisted by the CP, visible in the API. */
   env: Record<string, string>;
+  /** Secret env. Memory-only on both sides; dropped right after docker exec. */
+  secret_env: Record<string, string>;
 }
 
 export interface Size { cols: number; rows: number }

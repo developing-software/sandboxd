@@ -12,7 +12,8 @@ export class Scheduler {
   private secrets = new Map<string, Record<string, string>>();
   private timer: ReturnType<typeof setInterval>;
 
-  constructor(private store: Store, private hub: HostHub) {
+  /** `sandboxEnv` is operator-level env merged under every session's env at placement; never persisted. */
+  constructor(private store: Store, private hub: HostHub, private sandboxEnv: Record<string, string> = {}) {
     this.timer = setInterval(() => this.reapUnknown(), 15_000);
   }
 
@@ -25,8 +26,8 @@ export class Scheduler {
     }
   }
 
-  submit(row: SessionRow, env: Record<string, string>) {
-    this.secrets.set(row.id, env);
+  submit(row: SessionRow, secret_env: Record<string, string>) {
+    this.secrets.set(row.id, secret_env);
     if (!this.place(row)) log.info("queued", { sid: row.id, position: this.queuePosition(row.id) });
   }
 
@@ -55,11 +56,15 @@ export class Scheduler {
   private place(row: SessionRow): boolean {
     const hostId = this.pickHost();
     if (!hostId) return false;
-    const env = this.secrets.get(row.id) ?? {};
+    const env: Record<string, string> = JSON.parse(row.env);
+    // Precedence: session secret_env > session env > operator sandboxEnv.
+    // Operator env travels as secret_env because it may hold keys (e.g. LLM_API_KEY) and is never persisted.
+    const secret_env: Record<string, string> = { ...this.sandboxEnv };
+    for (const k of Object.keys(env)) delete secret_env[k];
+    Object.assign(secret_env, this.secrets.get(row.id) ?? {});
     const spec: SessionSpec = {
-      sid: row.id, repo: row.repo, branch: row.branch, base_branch: row.base_branch,
-      prompt: row.prompt, image: row.image, idle_timeout_s: row.idle_timeout_s, env,
-      agent: row.agent, model: row.model, llm_base_url: row.llm_base_url,
+      sid: row.id, image: row.image, cmd: row.cmd ? JSON.parse(row.cmd) : null,
+      idle_timeout_s: row.idle_timeout_s, env, secret_env,
     };
     if (!this.hub.createSession(hostId, spec)) return false;
     this.secrets.delete(row.id);
