@@ -24,13 +24,21 @@ curl -s localhost:8080/sessions -H 'authorization: Bearer dev-token' -H 'content
 curl -s localhost:8080/sessions -H 'authorization: Bearer dev-token' -H 'content-type: application/json' \
   -d '{"owner_id":"me","preset":"jupyter","repo":"https://github.com/org/notebooks.git"}'
 
+# a repo that needs postgres: services run on a private per-session network, reachable by name.
+# the parent app resolves these (e.g. from the repo's own config); the CP only validates them
+curl -s localhost:8080/sessions -H 'authorization: Bearer dev-token' -H 'content-type: application/json' \
+  -d '{"owner_id":"me","repo":"https://github.com/org/app.git","prompt":"fix the failing migration","setup":"bun install",
+       "env":{"DATABASE_URL":"postgres://app:pw@db:5432/app"},
+       "services":[{"name":"db","image":"postgres:16","env":{"POSTGRES_USER":"app","POSTGRES_DB":"app"},
+                    "secret_env":{"POSTGRES_PASSWORD":"pw"},"ready":{"port":5432}}]}'
+
 # anything else: image + command + env
 curl -s localhost:8080/sessions -H 'authorization: Bearer dev-token' -H 'content-type: application/json' \
   -d '{"owner_id":"me","preset":"custom","image":"python:3.12","cmd":["python3","-m","http.server","8000"],"env":{"PYTHONUNBUFFERED":"1"}}'
 ```
 
 Control plane env: `DEVAGENTS_SERVICE_TOKEN` (default `dev-token` with a warning),
-`DEVAGENTS_DEFAULT_IMAGE`, `DEVAGENTS_PREVIEW_DOMAIN`, `DEVAGENTS_PUBLIC_URL`, `DEVAGENTS_DB`.
+`DEVAGENTS_DEFAULT_IMAGE`, `DEVAGENTS_PREVIEW_DOMAIN`, `DEVAGENTS_PUBLIC_URL`, `DEVAGENTS_DB`, `DEVAGENTS_MAX_SERVICES` (8).
 Env injected into every sandbox: `DEVAGENTS_SANDBOX_ENV_<NAME>=value`, plus the shorthands
 `DEVAGENTS_LLM_BASE_URL` / `DEVAGENTS_LLM_API_KEY` (or plain `LLM_BASE_URL` / `LLM_API_KEY`).
 Coding-agent preset defaults: `DEVAGENTS_DEFAULT_AGENT`, `DEVAGENTS_DEFAULT_MODEL`, `DEVAGENTS_CODEX_MODEL`.

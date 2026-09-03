@@ -1,12 +1,15 @@
 // Placement + FIFO queue + reconciliation. Secrets for queued sessions live
 // only here, in memory; they are never written to the store.
-import type { EndReason, SessionSpec } from "../protocol/messages.ts";
+import type { EndReason, ServiceSpec, SessionSpec } from "../protocol/messages.ts";
 import type { Store, Session } from "./store.ts";
 import type { HostPlacement, HubEvents } from "./hosts/hub.ts";
 import { logger } from "../shared/log.ts";
 
 const log = logger("sched");
 const UNKNOWN_GRACE_MS = 90_000;
+
+/** Secrets held in memory for a queued session, keyed by service name for sidecars. */
+interface SessionSecrets { env: Record<string, string>; services: Record<string, Record<string, string>> }
 
 export interface Candidate { hostId: string; free: number }
 
@@ -23,7 +26,7 @@ export const mostFreeSlots: Placement = {
 };
 
 export class Scheduler implements HubEvents {
-  private secrets = new Map<string, Record<string, string>>();
+  private secrets = new Map<string, SessionSecrets>();
   private timer: ReturnType<typeof setInterval>;
 
   /** `sandboxEnv` is operator-level env merged under every session's env at placement; never persisted. */
@@ -43,8 +46,9 @@ export class Scheduler implements HubEvents {
     }
   }
 
-  submit(s: Session, secret_env: Record<string, string>) {
-    this.secrets.set(s.id, secret_env);
+  /** `serviceSecrets` is keyed by service name. Both maps are memory-only until placement. */
+  submit(s: Session, secret_env: Record<string, string>, serviceSecrets: Record<string, Record<string, string>> = {}) {
+    this.secrets.set(s.id, { env: secret_env, services: serviceSecrets });
     if (!this.place(s)) log.info("queued", { sid: s.id, position: this.queuePosition(s.id) });
   }
 
@@ -76,8 +80,10 @@ export class Scheduler implements HubEvents {
     // Operator env travels as secret_env because it may hold keys (e.g. LLM_API_KEY) and is never persisted.
     const secret_env: Record<string, string> = { ...this.sandboxEnv };
     for (const k of Object.keys(s.env)) delete secret_env[k];
-    Object.assign(secret_env, this.secrets.get(s.id) ?? {});
-    const spec: SessionSpec = { sid: s.id, image: s.image, cmd: s.cmd, idle_timeout_s: s.idle_timeout_s, env: { ...s.env }, secret_env };
+    const held = this.secrets.get(s.id);
+    Object.assign(secret_env, held?.env ?? {});
+    const services: ServiceSpec[] = s.services.map((d) => ({ ...d, env: { ...d.env }, secret_env: { ...(held?.services[d.name] ?? {}) } }));
+    const spec: SessionSpec = { sid: s.id, image: s.image, cmd: s.cmd, idle_timeout_s: s.idle_timeout_s, env: { ...s.env }, secret_env, services };
     if (!this.hub.createSession(hostId, spec)) return false;
     this.secrets.delete(s.id);
     this.store.markCreating(s.id, hostId);

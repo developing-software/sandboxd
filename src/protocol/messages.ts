@@ -2,6 +2,19 @@
 
 export type EndReason = "closed" | "idle" | "failed" | "lost" | "exited";
 
+/** A sidecar container on the session's private network, reachable from the
+ *  sandbox as `name`. Started before the sandbox, removed with it. */
+export interface ServiceSpec {
+  name: string;
+  image: string;
+  /** Non-secret env, set at container create. Persisted by the CP. */
+  env: Record<string, string>;
+  /** Secret env, set at container create. Memory-only on the CP; visible in `docker inspect` on the host. */
+  secret_env: Record<string, string>;
+  /** Block the sandbox until TCP `port` on the service accepts a connection, or fail the session after `timeout_s`. */
+  ready: { port: number; timeout_s: number } | null;
+}
+
 /** What the CP asks a host to run. Deliberately generic: the CP knows nothing
  *  about repos, agents or models; presets on the CP side turn those into env. */
 export interface SessionSpec {
@@ -14,6 +27,8 @@ export interface SessionSpec {
   env: Record<string, string>;
   /** Secret env. Memory-only on both sides; dropped right after docker exec. */
   secret_env: Record<string, string>;
+  /** Sidecars. Empty = the sandbox alone on the default bridge network. */
+  services: ServiceSpec[];
 }
 
 export interface Size { cols: number; rows: number }

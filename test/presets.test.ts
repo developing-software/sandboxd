@@ -17,7 +17,7 @@ test("coding-agent: repo + prompt expand to entry.sh env; secrets split out", ()
   const x = coding.expand("s_1", {
     repo: "https://x/r.git", prompt: "do it", llm: { base_url: "http://mine/", api_key: "sk" }, secrets: { git_token: "gt" },
   });
-  expect(x.env).toEqual({ REPO: "https://x/r.git", BRANCH: "devagents/s_1", BASE_BRANCH: "", PROMPT: "do it", AGENT: "claude", MODEL: "claude-sonnet-4-6", LLM_BASE_URL: "http://mine" });
+  expect(x.env).toEqual({ REPO: "https://x/r.git", BRANCH: "devagents/s_1", BASE_BRANCH: "", PROMPT: "do it", AGENT: "claude", MODEL: "claude-sonnet-4-6", SETUP: "", LLM_BASE_URL: "http://mine" });
   expect(x.secret_env).toEqual({ LLM_API_KEY: "sk", GIT_TOKEN: "gt" });
 });
 
@@ -56,4 +56,10 @@ test("registry: explicit name, claim by repo, fallback to custom, unknown -> 400
   expect(reg.resolve({ image: "python:3.12" }).name).toBe("custom");
   expect(() => reg.resolve({ preset: "nope" })).toThrow(/preset must be one of/);
   expect(() => new PresetRegistry([customPreset()], "missing")).toThrow(/not registered/);
+});
+
+test("coding-agent: setup command is passed through as SETUP", () => {
+  expect(coding.expand("s", { repo: "r", setup: " bun install " }).env.SETUP).toBe("bun install");
+  expect(coding.expand("s", { repo: "r" }).env.SETUP).toBe("");
+  expect(() => coding.expand("s", { repo: "r", setup: 1 })).toThrow(/setup must be a string/);
 });

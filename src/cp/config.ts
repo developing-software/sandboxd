@@ -11,6 +11,8 @@ export interface CpConfig {
   /** Operator-level env injected into every sandbox at placement time (never persisted).
    *  From DEVAGENTS_SANDBOX_ENV_<NAME>=value, plus the LLM_BASE_URL / LLM_API_KEY shorthands. */
   sandboxEnv: Record<string, string>;
+  /** Cap on sidecar services per session (DEVAGENTS_MAX_SERVICES, default 8). */
+  maxServices: number;
   dbPath: string;
   dev: boolean;
 }
@@ -44,6 +46,7 @@ export function loadConfig(env: Env = process.env): CpConfig {
     previewDomain: env.DEVAGENTS_PREVIEW_DOMAIN ?? "preview.localhost",
     defaultImage: env.DEVAGENTS_DEFAULT_IMAGE ?? "devagents-sandbox:latest",
     sandboxEnv,
+    maxServices: Number(env.DEVAGENTS_MAX_SERVICES || 8),
     dbPath: env.DEVAGENTS_DB ?? "cp.db",
     dev: env.DEVAGENTS_DEV === "true" || env.DEVAGENTS_DEV === "1",
   };

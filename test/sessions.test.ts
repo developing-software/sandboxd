@@ -17,7 +17,7 @@ class NoHosts implements HostPlacement {
 function setup() {
   const store = new Store(":memory:");
   const sched = new Scheduler(store, new NoHosts());
-  const cfg = { defaultImage: "default:latest", publicUrl: "https://cp.example.com", previewDomain: "preview.example.com" };
+  const cfg = { defaultImage: "default:latest", publicUrl: "https://cp.example.com", previewDomain: "preview.example.com", maxServices: 2 };
   const presets = new PresetRegistry(builtinPresets({ DEVAGENTS_JUPYTER_IMAGE: "jup:1" }));
   return { store, svc: new SessionService(cfg, store, new NoHosts(), sched, new Tokens("k"), presets) };
 }
@@ -79,4 +79,30 @@ test("validateEnv: names, reserved keys, types", () => {
   expect(() => validateEnv("env", { TERM: "x" })).toThrow(/reserved/);
   expect(() => validateEnv("env", { A: 1 })).toThrow(/must be a string/);
   expect(() => validateEnv("env", ["A"])).toThrow(/object/);
+});
+
+test("services: validated, secrets split by name, non-secret half visible in the view", () => {
+  const { store, svc } = setup();
+  const v = svc.create({
+    owner_id: "me",
+    services: [
+      { name: "db", image: "postgres:16", env: { POSTGRES_DB: "app" }, secret_env: { POSTGRES_PASSWORD: "pw" }, ready: { port: 5432 } },
+      { name: "cache", image: "redis:7" },
+    ],
+  });
+  expect(v.services).toEqual([
+    { name: "db", image: "postgres:16", env: { POSTGRES_DB: "app" }, ready: { port: 5432, timeout_s: 60 } },
+    { name: "cache", image: "redis:7", env: {}, ready: null },
+  ]);
+  expect(JSON.stringify(store.db.query("SELECT * FROM sessions").all())).not.toContain("pw");
+  const bad = (services: unknown) => () => svc.create({ owner_id: "me", services });
+  expect(bad("x")).toThrow(/must be an array/);
+  expect(bad([{ name: "Bad_Name", image: "i" }])).toThrow(/name must match/);
+  expect(bad([{ name: "sandbox", image: "i" }])).toThrow(/reserved/);
+  expect(bad([{ name: "a", image: "i" }, { name: "a", image: "i" }])).toThrow(/duplicated/);
+  expect(bad([{ name: "a" }])).toThrow(/image is required/);
+  expect(bad([{ name: "a", image: "i", ready: { port: 0 } }])).toThrow(/ready.port/);
+  expect(bad([{ name: "a", image: "i", ready: { port: 80, timeout_s: 9999 } }])).toThrow(/ready.timeout_s/);
+  expect(bad([{ name: "a", image: "i", env: { TERM: "x" } }])).toThrow(/reserved/);
+  expect(bad([{ name: "a", image: "i" }, { name: "b", image: "i" }, { name: "c", image: "i" }])).toThrow(/at most 2/);
 });

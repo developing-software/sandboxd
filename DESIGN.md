@@ -11,7 +11,9 @@ self-hosted machines and supervise them through a browser terminal.
   the control plane over one persistent WebSocket; nothing inbound is required.
 - A **session** is one sandbox: a fresh Docker container from an image, one
   command started in a PTY with some env, gone when it ends. Disposable.
-  The core does not know what runs inside. **Presets** on the CP turn a
+  It may bring **services**: sidecar containers (Postgres, Redis, …) on a
+  private per-session network, reachable from the sandbox by name, started
+  before it and removed with it. The core does not know what runs inside. **Presets** on the CP turn a
   friendly request (repo + prompt + agent) into image/cmd/env; the built-in
   `coding-agent` preset is the reason this service exists, `jupyter` runs a
   notebook server behind the preview proxy, and any image that honours the
@@ -44,6 +46,7 @@ self-hosted machines and supervise them through a browser terminal.
 | 17 | `/dev` xterm.js page behind `DEVAGENTS_DEV=true` | No UI; real Svelte frontend |
 | 18 | One package, `src/{protocol,shared,cp,agent,dev}` | Bun workspaces |
 | 20 | Generic core (`image, cmd, env, secret_env`) + CP-side presets; the image is the plugin | Agent kinds baked into the protocol and daemon; driver plugins in the daemon |
+| 21 | Session may declare `services` (added 2026-09-03): sidecar containers on a per-session bridge network, resolved by the **parent app** (from the repo's own config, a catalog, wherever) and passed fully formed in the API; CP validates shape only | CP reads `.devagents.yaml` from the repo (CP would need provider APIs + a trust tier for repo-authored config); compose files; a CP-side service catalog |
 
 ## Topology
 
@@ -74,9 +77,11 @@ POST /sessions ──► queued ──► creating ──► running ──► e
 - **Placement:** online + approved host with most free slots (`max - running`
   from heartbeat). None → `queued`, FIFO, persisted. Drains on every heartbeat
   and on every session end.
-- **Creating:** CP sends `session.create` with image, cmd, env, secret_env and
-  idle timeout. Daemon: create container → exec cmd (or the image's default
-  entry) in a PTY with that env → `session.started`.
+- **Creating:** CP sends `session.create` with image, cmd, env, secret_env,
+  services and idle timeout. Daemon: (if services) create network → start each
+  service in order, waiting on its `ready` TCP port → create sandbox → exec cmd
+  (or the image's default entry) in a PTY with that env → `session.started`.
+  Any step failing removes what was started and ends the session `failed`.
 - **Running:** daemon owns the PTY regardless of viewers. Viewers attach via CP;
   attach = ring-buffer replay, then live. N viewers fan out; last resize wins.
 - **Idle:** daemon tracks `last_activity` = last byte in *or* out of the PTY.
@@ -107,7 +112,9 @@ POST /sessions ──► queued ──► creating ──► running ──► e
   Forwarded to the daemon, injected as env into the PTY process. Not written to
   SQLite, not logged, dropped from memory after `docker exec`. Operator-level
   `DEVAGENTS_SANDBOX_ENV_*` (and the `LLM_BASE_URL` / `LLM_API_KEY` shorthands)
-  travel the same path and are never persisted either.
+  travel the same path and are never persisted either. A service's `secret_env`
+  is weaker by necessity: it is set at container create (there is no exec step),
+  so it is visible in `docker inspect` on the host. Still never stored on the CP.
 - **Enrollment:** daemon generates `host_secret` on first run
   (`~/.config/devagents/host.json`, 0600). `hello{name, fingerprint}` where
   `fingerprint = sha256(secret)`. Unknown fingerprint → CP inserts
@@ -127,7 +134,7 @@ session or one proxied TCP connection for a preview port.
 | host→cp | `hello{name, fingerprint, running: sid[], max_sessions}` |
 | cp→host | `hello.ok{host_id}` · `hello.pending{code}` · `hello.rejected` |
 | host→cp | `heartbeat{running, max}` every 10 s |
-| cp→host | `session.create{sid, image, cmd | null, idle_timeout_s, env, secret_env}` |
+| cp→host | `session.create{sid, image, cmd | null, idle_timeout_s, env, secret_env, services: [{name, image, env, secret_env, ready: {port, timeout_s} | null}]}` |
 | host→cp | `session.started{sid}` · `session.ended{sid, reason}` |
 | cp→host | `session.destroy{sid}` |
 | cp→host | `pty.open{sid, stream, cols, rows}` · `pty.resize{sid, cols, rows}` · `pty.close{stream}` |
@@ -143,12 +150,20 @@ Stream ids are allocated by the CP (odd) and never reused within a connection.
 GET    /hosts                          list (status, online, running/max)
 POST   /hosts/:id/approve   {code}
 POST   /hosts/:id/revoke
-POST   /sessions            core:   {owner_id, preset?, image?, cmd?: string[], env?, secret_env?, idle_timeout_s?}
+POST   /sessions            core:   {owner_id, preset?, image?, cmd?: string[], env?, secret_env?, idle_timeout_s?,
+                                     services?: [{name, image, env?, secret_env?, ready?: {port, timeout_s?}}]}
+                            services: sidecars on a private per-session network, reachable from the sandbox as `name`
+                                    (DNS label, `sandbox` reserved). Started in order before the sandbox; `ready` blocks
+                                    until TCP `port` accepts (timeout default 60 s, max 600) or fails the session.
+                                    At most DEVAGENTS_MAX_SERVICES (8). The parent app resolves these however it likes
+                                    (repo config, catalog); the CP does not template or fetch anything (decision 21).
+                                    Non-secret halves are persisted and echoed in the session view.
                             preset "coding-agent" (default when repo is given) adds:
-                                    {repo, prompt, base_branch?, branch?, agent?: claude|codex|opencode|shell, model?,
+                                    {repo, prompt, base_branch?, branch?, setup?, agent?: claude|codex|opencode|shell, model?,
                                      llm?: {base_url?, api_key?},          // OpenAI/Anthropic-compatible gateway (LiteLLM)
                                      secrets?: {git_token?, anthropic_api_key?}}
-                                    → env REPO BRANCH BASE_BRANCH PROMPT AGENT MODEL [LLM_BASE_URL]
+                                    → env REPO BRANCH BASE_BRANCH PROMPT AGENT MODEL SETUP [LLM_BASE_URL]
+                                      (SETUP = shell command run in the clone before the agent, e.g. `bun install`)
                                       secret_env [GIT_TOKEN ANTHROPIC_API_KEY LLM_API_KEY]
                                     defaults: agent = DEVAGENTS_DEFAULT_AGENT (shell if prompt empty),
                                               model = DEVAGENTS_DEFAULT_MODEL (claude-sonnet-4-6), DEVAGENTS_CODEX_MODEL for codex
@@ -185,6 +200,13 @@ own entrypoint kept idle (`sleep infinity`), then execs `cmd` (default:
 Any TCP port it listens on can be previewed. That is all the daemon assumes;
 what the env means is between the caller and the image.
 
+**Services** are ordinary containers: the image's own command, `env` set at
+create, joined to the session's bridge network `devagents-<sid>` under their
+`name` as DNS alias (the sandbox is `sandbox`). A session without services stays
+on Docker's default bridge. Readiness = the daemon dialling `ready.port` every
+500 ms until it accepts. Teardown: sandbox, services in reverse order, network.
+Orphans from a previous daemon run are found by label and removed on start.
+
 The default image implements the `coding-agent` preset.
 `images/Dockerfile`: `debian:bookworm-slim` + git, curl, node, bun,
 `@anthropic-ai/claude-code`, `@openai/codex`, `opencode-ai`; user `dev`; `WORKDIR /workspace`.
@@ -202,11 +224,12 @@ IP used for preview dialing.
 `SandboxDriver` interface (only `docker` implemented):
 
 ```ts
-create(opts): Promise<SandboxId>
-attach(id, cmd, size): Promise<PtyStream>   // docker exec Tty:true, hijacked
-resize(id, execId, size): Promise<void>
-dial(id, port): Promise<Duplex>             // TCP to container ip:port
+create({sid, image, role: sandbox|service, network?, alias?, env?}): Promise<id>
+attach(id, cmd, env, size): Promise<PtyStream>   // docker exec Tty:true, hijacked; resize lives on the stream
+dial(id, port): Promise<Duplex>                  // TCP to container ip:port; also the readiness probe
 destroy(id): Promise<void>
+createNetwork(sid): Promise<name> · removeNetwork(sid)
+listManaged(): {containers, networks}            // by label, for orphan cleanup
 ```
 
 ## Storage (SQLite)
@@ -215,9 +238,10 @@ destroy(id): Promise<void>
 hosts    (id, name, fingerprint UNIQUE, status pending|approved|revoked,
           approve_code, max_sessions, last_seen_at, created_at)
 sessions (id, owner_id, host_id NULL, status, ended_reason NULL, ended_detail NULL,
-          preset, image, cmd NULL (JSON string[]), env (JSON object), idle_timeout_s,
+          preset, image, cmd NULL (JSON string[]), env (JSON object),
+          services (JSON [{name, image, env, ready}], secrets stripped), idle_timeout_s,
           created_at, started_at, ended_at, unknown_since NULL)
-PRAGMA user_version = 2   -- no migrations in v1; another version is refused at boot
+PRAGMA user_version = 3   -- no migrations in v1; another version is refused at boot
 ```
 
 No terminal bytes. No secrets. Queue position is derived from `created_at`

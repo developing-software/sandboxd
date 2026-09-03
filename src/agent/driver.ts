@@ -17,16 +17,32 @@ export interface Duplex {
   onClose(cb: () => void): void;
 }
 
-export interface CreateOpts { sid: string; image: string }
+export interface CreateOpts {
+  sid: string;
+  image: string;
+  /** `sandbox`: kept idle so a PTY can be exec'd into it. `service`: runs the image's own command. */
+  role: "sandbox" | "service";
+  /** Session network to join (from createNetwork) and the DNS alias on it. Omit for the default network. */
+  network?: string;
+  alias?: string;
+  /** Env set at container create (services). The sandbox gets its env at exec time instead. */
+  env?: Record<string, string>;
+}
+
+export interface Managed { id: string; sid: string }
 
 export interface SandboxDriver {
-  /** Create and start a sandbox from `image`; returns the driver's id for it. */
+  /** Create and start a container; returns the driver's id for it. */
   create(opts: CreateOpts): Promise<string>;
   /** Exec `cmd` with `env` in a PTY inside the sandbox. */
   attach(id: string, cmd: string[], env: Record<string, string>, size: Size): Promise<PtyStream>;
-  /** TCP connection to `port` inside the sandbox (preview proxy). */
+  /** TCP connection to `port` inside a container (preview proxy, readiness probes). Rejects when refused. */
   dial(id: string, port: number): Promise<Duplex>;
   destroy(id: string): Promise<void>;
-  /** Sandboxes this agent identity created (for orphan cleanup on start). */
-  listManaged(): Promise<{ id: string; sid: string }[]>;
+  /** Private network for one session's containers. Returns its name. */
+  createNetwork(sid: string): Promise<string>;
+  /** Idempotent. */
+  removeNetwork(sid: string): Promise<void>;
+  /** Containers and networks this agent identity created (for orphan cleanup on start). */
+  listManaged(): Promise<{ containers: Managed[]; networks: Managed[] }>;
 }

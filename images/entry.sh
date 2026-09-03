@@ -5,6 +5,7 @@
 #   REPO BRANCH BASE_BRANCH   clone target (REPO empty = skip cloning)
 #   AGENT                     claude|codex|opencode|shell (default shell)
 #   PROMPT MODEL              handed to the agent
+#   SETUP                     shell command run in the clone before the agent (optional)
 #   LLM_BASE_URL              OpenAI/Anthropic-compatible gateway root, e.g. a LiteLLM proxy (no /v1)
 #   LLM_API_KEY               key for that gateway (secret)
 #   GIT_TOKEN ANTHROPIC_API_KEY (secrets, optional)
@@ -51,6 +52,10 @@ if [ -z "${REPO:-}" ]; then
 elif git clone ${BASE_BRANCH:+--branch "$BASE_BRANCH"} "$REPO" . 2>&1; then
   git checkout -b "${BRANCH:-devagents/${DEVAGENTS_SESSION_ID:-work}}" 2>&1
   echo "▶ on branch $(git branch --show-current)"
+  if [ -n "${SETUP:-}" ]; then
+    echo "▶ setup: $SETUP"
+    bash -lc "$SETUP" || echo "⚠ setup exited with $?; continuing"
+  fi
   run_agent
   echo
   echo "▶ agent exited. You are in a shell; \`git push -u origin $(git branch --show-current)\` when ready."

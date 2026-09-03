@@ -2,13 +2,18 @@
 // PTY attach = `exec` with Tty:true, hijacked on a raw socket (fetch can't do upgrades).
 import type { Socket } from "bun";
 import type { Size } from "../protocol/messages.ts";
-import type { CreateOpts, Duplex, PtyStream, SandboxDriver } from "./driver.ts";
+import type { CreateOpts, Duplex, Managed, PtyStream, SandboxDriver } from "./driver.ts";
 import { concat, findCRLF2 } from "../shared/bytes.ts";
 
-interface ContainerCreated { Id: string }
-interface ExecCreated { Id: string }
+interface Created { Id: string }
 interface ContainerInspect { NetworkSettings?: { IPAddress?: string; Networks?: Record<string, { IPAddress?: string }> } }
 interface ContainerSummary { Id: string; Labels?: Record<string, string> }
+interface NetworkSummary { Id: string; Name: string; Labels?: Record<string, string> }
+
+const MANAGED = "devagents.managed";
+const SID = "devagents.sid";
+const HOST = "devagents.host";
+const ROLE = "devagents.role";
 
 export class DockerDriver implements SandboxDriver {
   /** `owner` scopes create/list/cleanup to this agent identity, so several agents
@@ -27,28 +32,44 @@ export class DockerDriver implements SandboxDriver {
     return text ? (JSON.parse(text) as T) : null;
   }
 
+  private labels(sid: string, role?: string): Record<string, string> {
+    return { [MANAGED]: "1", [SID]: sid, [HOST]: this.owner, ...(role ? { [ROLE]: role } : {}) };
+  }
+
+  private filters(extra: string[] = []) {
+    return encodeURIComponent(JSON.stringify({ label: [`${MANAGED}=1`, `${HOST}=${this.owner}`, ...extra] }));
+  }
+
   private async pull(image: string) {
     const r = await fetch(`http://docker/images/create?fromImage=${encodeURIComponent(image)}`, { unix: this.sock, method: "POST" });
     if (!r.ok) throw new Error(`docker pull ${image} -> ${r.status}: ${await r.text()}`);
     await r.text(); // drain progress stream until complete
   }
 
-  async create({ sid, image }: CreateOpts): Promise<string> {
+  async create({ sid, image, role, network, alias, env }: CreateOpts): Promise<string> {
+    const name = role === "sandbox" ? `devagents-${sid}` : `devagents-${sid}-${alias ?? "svc"}`;
     const body = {
       Image: image,
-      Cmd: ["sleep", "infinity"],
-      Labels: { "devagents.managed": "1", "devagents.sid": sid, "devagents.host": this.owner },
-      // host.docker.internal lets a sandbox reach services on the host (e.g. a LiteLLM proxy on localhost).
-      HostConfig: { Init: true, ExtraHosts: ["host.docker.internal:host-gateway"] },
+      // The sandbox is kept idle so a PTY can be exec'd into it; a service runs whatever the image runs.
+      ...(role === "sandbox" ? { Cmd: ["sleep", "infinity"] } : {}),
+      Env: env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : undefined,
+      Labels: this.labels(sid, role),
+      HostConfig: {
+        Init: true,
+        // host.docker.internal lets a sandbox reach services on the host (e.g. a LiteLLM proxy on localhost).
+        ExtraHosts: ["host.docker.internal:host-gateway"],
+        ...(network ? { NetworkMode: network } : {}),
+      },
+      ...(network && alias ? { NetworkingConfig: { EndpointsConfig: { [network]: { Aliases: [alias] } } } } : {}),
     };
-    const createPath = `/containers/create?name=devagents-${sid}`;
-    let res: ContainerCreated | null;
+    const createPath = `/containers/create?name=${name}`;
+    let res: Created | null;
     try {
-      res = await this.api<ContainerCreated>("POST", createPath, body);
+      res = await this.api<Created>("POST", createPath, body);
     } catch (e) {
       if (!String(e).includes("-> 404")) throw e;
       await this.pull(image);
-      res = await this.api<ContainerCreated>("POST", createPath, body);
+      res = await this.api<Created>("POST", createPath, body);
     }
     if (!res) throw new Error("docker create returned no body");
     await this.api("POST", `/containers/${res.Id}/start`);
@@ -56,7 +77,7 @@ export class DockerDriver implements SandboxDriver {
   }
 
   async attach(id: string, cmd: string[], env: Record<string, string>, size: Size): Promise<PtyStream> {
-    const exec = await this.api<ExecCreated>("POST", `/containers/${id}/exec`, {
+    const exec = await this.api<Created>("POST", `/containers/${id}/exec`, {
       AttachStdin: true, AttachStdout: true, AttachStderr: true, Tty: true,
       Cmd: cmd, Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
     });
@@ -154,9 +175,24 @@ export class DockerDriver implements SandboxDriver {
     });
   }
 
-  async listManaged(): Promise<{ id: string; sid: string }[]> {
-    const filters = encodeURIComponent(JSON.stringify({ label: ["devagents.managed=1", `devagents.host=${this.owner}`] }));
-    const list = (await this.api<ContainerSummary[]>("GET", `/containers/json?all=1&filters=${filters}`)) ?? [];
-    return list.map((c) => ({ id: c.Id, sid: c.Labels?.["devagents.sid"] ?? "?" }));
+  async createNetwork(sid: string): Promise<string> {
+    const name = `devagents-${sid}`;
+    await this.api("POST", "/networks/create", { Name: name, Driver: "bridge", Labels: this.labels(sid) });
+    return name;
+  }
+
+  async removeNetwork(sid: string): Promise<void> {
+    await this.api("DELETE", `/networks/devagents-${sid}`).catch((e) => {
+      if (!/-> 404/.test(String(e))) throw e;
+    });
+  }
+
+  async listManaged(): Promise<{ containers: Managed[]; networks: Managed[] }> {
+    const containers = (await this.api<ContainerSummary[]>("GET", `/containers/json?all=1&filters=${this.filters()}`)) ?? [];
+    const networks = (await this.api<NetworkSummary[]>("GET", `/networks?filters=${this.filters()}`)) ?? [];
+    return {
+      containers: containers.map((c) => ({ id: c.Id, sid: c.Labels?.[SID] ?? "?" })),
+      networks: networks.map((n) => ({ id: n.Id, sid: n.Labels?.[SID] ?? "?" })),
+    };
   }
 }

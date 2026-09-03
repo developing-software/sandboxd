@@ -53,7 +53,7 @@ beforeAll(() => {
   const store = new Store(":memory:");
   store.insertPendingHost({ id: HOST, name: HOST, fingerprint: "fp", approve_code: "AAAA-AA", max_sessions: 1 });
   store.approveHost(HOST);
-  store.insertSession({ id: SID, owner_id: "o", preset: "custom", image: "img", cmd: null, env: {}, idle_timeout_s: 60, created_at: 1 });
+  store.insertSession({ id: SID, owner_id: "o", preset: "custom", image: "img", cmd: null, env: {}, services: [], idle_timeout_s: 60, created_at: 1 });
   store.markCreating(SID, HOST); store.markRunning(SID);
   const tokens = new Tokens("secret");
   cookie = `${COOKIE}=${tokens.sign({ k: "preview-cookie", sid: SID, port: upstream.port! }, 60_000)}`;

@@ -1,12 +1,16 @@
 // Session use cases behind the HTTP API. Auth has already happened; every call
 // carries owner_id and ownership is enforced here (the CP has no user table).
 import type { CpConfig } from "./config.ts";
-import type { Store, Session } from "./store.ts";
+import type { Store, Session, ServiceDecl } from "./store.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { Tokens } from "./tokens.ts";
 import type { PresetRegistry } from "./presets/index.ts";
 import { badRequest, conflict, notFound } from "../shared/errors.ts";
 import { newSessionId } from "../shared/ids.ts";
+import { validateEnv } from "./env.ts";
+import { validateServices } from "./services.ts";
+
+export { validateEnv } from "./env.ts";
 
 const ATTACH_TTL_MS = 60_000;
 const PREVIEW_TTL_MS = 10 * 60_000;
@@ -25,13 +29,16 @@ export interface CreateSessionBody {
   env?: Record<string, string>;
   /** Extra secret env (never persisted) merged over what the preset produced. */
   secret_env?: Record<string, string>;
+  /** Sidecars on the session's private network. The parent app resolves these
+   *  (from the repo's own config, a catalog, wherever); the CP only validates shape. See services.ts. */
+  services?: unknown;
   [presetField: string]: unknown;
 }
 
 export interface SessionView {
   id: string; owner_id: string; status: Session["status"]; host_id: string | null; host_online: boolean | null;
   queue_position: number | null; ended_reason: Session["ended_reason"]; ended_detail: string | null;
-  preset: string; image: string; cmd: string[] | null; env: Record<string, string>;
+  preset: string; image: string; cmd: string[] | null; env: Record<string, string>; services: ServiceDecl[];
   idle_timeout_s: number; created_at: number; started_at: number | null; ended_at: number | null;
 }
 
@@ -39,7 +46,7 @@ export interface HostOnline { isOnline(hostId: string): boolean }
 
 export class SessionService {
   constructor(
-    private cfg: Pick<CpConfig, "defaultImage" | "publicUrl" | "previewDomain">,
+    private cfg: Pick<CpConfig, "defaultImage" | "publicUrl" | "previewDomain" | "maxServices">,
     private store: Store, private hosts: HostOnline, private sched: Scheduler,
     private tokens: Tokens, private presets: PresetRegistry,
   ) {}
@@ -59,12 +66,13 @@ export class SessionService {
     // Caller-supplied values win over what the preset implied.
     const env = { ...expanded.env, ...validateEnv("env", b.env) };
     const secret_env = { ...expanded.secret_env, ...validateEnv("secret_env", b.secret_env) };
+    const services = validateServices(b.services, this.cfg.maxServices);
     const row = this.store.insertSession({
       id, owner_id: b.owner_id, preset: preset.name,
       image: (typeof b.image === "string" && b.image.trim()) || expanded.image || this.cfg.defaultImage,
-      cmd: b.cmd ?? expanded.cmd ?? null, env, idle_timeout_s: idle, created_at: Date.now(),
+      cmd: b.cmd ?? expanded.cmd ?? null, env, services: services.decls, idle_timeout_s: idle, created_at: Date.now(),
     });
-    this.sched.submit(row, secret_env);
+    this.sched.submit(row, secret_env, services.secrets);
     return this.view(this.store.session(id)!);
   }
 
@@ -111,27 +119,8 @@ export class SessionService {
       host_online: s.host_id ? this.hosts.isOnline(s.host_id) : null,
       queue_position: s.status === "queued" ? this.sched.queuePosition(s.id) : null,
       ended_reason: s.ended_reason, ended_detail: s.ended_detail,
-      preset: s.preset, image: s.image, cmd: s.cmd, env: s.env,
+      preset: s.preset, image: s.image, cmd: s.cmd, env: s.env, services: s.services,
       idle_timeout_s: s.idle_timeout_s, created_at: s.created_at, started_at: s.started_at, ended_at: s.ended_at,
     };
   }
-}
-
-/** Set by the daemon on every PTY; callers may not override them. */
-const RESERVED = new Set(["TERM", "DEVAGENTS_SESSION_ID"]);
-const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const MAX_ENV_BYTES = 64 * 1024;
-
-export function validateEnv(name: string, env: unknown): Record<string, string> {
-  if (env === undefined || env === null) return {};
-  if (typeof env !== "object" || Array.isArray(env)) throw badRequest(`${name} must be an object of strings`);
-  let bytes = 0;
-  for (const [k, v] of Object.entries(env as Record<string, unknown>)) {
-    if (!KEY_RE.test(k)) throw badRequest(`${name}: invalid variable name "${k}"`);
-    if (RESERVED.has(k)) throw badRequest(`${name}: "${k}" is reserved`);
-    if (typeof v !== "string") throw badRequest(`${name}.${k} must be a string`);
-    bytes += k.length + v.length;
-  }
-  if (bytes > MAX_ENV_BYTES) throw badRequest(`${name} exceeds ${MAX_ENV_BYTES} bytes; ship large inputs through the repo or the image`);
-  return env as Record<string, string>;
 }
