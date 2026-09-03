@@ -44,6 +44,9 @@
   details { margin-top: 10px; }
   summary { cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
   .hidden { display: none; }
+  .check { display: flex; gap: 8px; align-items: baseline; margin: 6px 0; }
+  .check input { width: auto; margin: 0; }
+  .check label { margin: 0; color: var(--text); }
 </style>
 </head>
 <body>
@@ -58,59 +61,26 @@
   <div id="hosts" class="muted">loading…</div>
 
   <h2>new session</h2>
-  <label>preset</label>
-  <select id="preset">
-    <option value="coding-agent">coding-agent — clone a repo, run an agent</option>
-    <option value="jupyter">jupyter — notebook server behind the preview</option>
-    <option value="custom">custom — image + command + env</option>
-  </select>
+  <label>preset <span class="muted">(from GET /presets)</span></label>
+  <select id="preset"></select>
+  <div id="presetDesc" class="muted" style="font-size:11px;margin-top:3px"></div>
+  <!-- One input per preset field, rendered from its schema; see renderFields(). -->
+  <div id="fields"></div>
 
-  <div id="presetCoding">
-    <label>repository</label>
-    <input id="repo" placeholder="https://github.com/org/repo.git">
-    <label>prompt <span class="muted">(empty = shell only)</span></label>
-    <textarea id="prompt" placeholder="what should the agent do?"></textarea>
-    <div class="row">
-      <div><label>agent</label>
-        <select id="agent">
-          <option value="">auto</option>
-          <option value="claude">claude</option>
-          <option value="codex">codex</option>
-          <option value="opencode">opencode</option>
-          <option value="shell">shell</option>
-        </select></div>
-      <div><label>model</label><input id="model" placeholder="claude-sonnet-4-6"></div>
-    </div>
-    <label>llm base url <span class="muted">(default from control plane)</span></label>
-    <input id="llmBase" placeholder="https://llm.example.com">
-    <label>llm api key</label>
-    <input id="llmKey" type="password" placeholder="default from control plane">
-    <label>git token</label>
-    <input id="gitToken" type="password" placeholder="optional, for private repos / push">
-  </div>
-
-  <div id="presetJupyter" class="hidden">
-    <label>repository <span class="muted">(optional, cloned into the notebook root)</span></label>
-    <input id="jRepo" placeholder="https://github.com/org/notebooks.git">
-    <div class="row">
-      <div><label>ui</label>
-        <select id="jUi">
-          <option value="lab">lab</option>
-          <option value="notebook">notebook</option>
-        </select></div>
-      <div><label>port</label><input id="jPort" value="8888"></div>
-    </div>
-    <label>git token</label>
-    <input id="jGitToken" type="password" placeholder="optional, for private repos">
-  </div>
-
-  <div id="presetCustom" class="hidden">
+  <details>
+    <summary>services</summary>
+    <label>catalog <span class="muted">(GET /services; sidecars on the session network)</span></label>
+    <div id="services" class="muted">loading…</div>
+    <label>compose file <span class="muted">(services become sidecars; build-only ones are skipped)</span></label>
+    <textarea id="compose" placeholder="services:&#10;  db:&#10;    image: postgres:16&#10;    environment: { POSTGRES_PASSWORD: pw }"></textarea>
+  </details>
+  <details>
+    <summary>image &amp; command</summary>
+    <label>image <span class="muted">(empty = the preset's image)</span></label>
+    <input id="image" placeholder="devagents-coding-agent:latest">
     <label>command <span class="muted">(empty = image default entry)</span></label>
     <input id="cmd" placeholder="bash -l   or   [&quot;python3&quot;,&quot;-m&quot;,&quot;http.server&quot;]">
-  </div>
-
-  <label>image</label>
-  <input id="image" placeholder="devagents-sandbox:latest">
+  </details>
   <details>
     <summary>env</summary>
     <label>env <span class="muted">(KEY=value per line, stored)</span></label>
@@ -148,7 +118,7 @@ window.addEventListener("error", (e) => {
 
 // ---- api ----
 $("token").value = localStorage.getItem("devagents_token") || "dev-token";
-$("token").addEventListener("change", () => { localStorage.setItem("devagents_token", $("token").value); refresh(); });
+$("token").addEventListener("change", () => { localStorage.setItem("devagents_token", $("token").value); presetsByName = {}; refresh(); });
 const owner = () => $("owner").value.trim() || "dev";
 async function api(method, path, body) {
   const r = await fetch(path, {
@@ -264,10 +234,13 @@ function renderSessions(sessions) {
 window.attach = attach;
 function describe(s) {
   const e = s.env || {};
-  if (s.preset === "coding-agent") return `${e.AGENT}${e.MODEL ? " / " + e.MODEL : ""} · ${e.REPO} → ${e.BRANCH}`;
-  if (s.preset === "jupyter") return `jupyter ${e.JUPYTER_UI} :${e.JUPYTER_PORT}${e.REPO ? " · " + e.REPO : ""} · ${s.image}`;
-  return `${s.preset} · ${s.cmd ? s.cmd.join(" ") : "default entry"} · ${s.image}`;
+  return [
+    s.preset, e.REPO, e.AGENT ? e.AGENT + (e.MODEL ? "/" + e.MODEL : "") : "",
+    s.services?.length ? "+ " + s.services.map((x) => x.name).join(", ") : "",
+    s.cmd ? s.cmd.join(" ") : "", s.image,
+  ].filter(Boolean).map(esc).join(" · ");
 }
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 function parseEnv(text) {
   const out = {};
   for (const line of text.split("\n")) {
@@ -281,15 +254,59 @@ function parseCmd(text) {
   const t = text.trim(); if (!t) return undefined;
   return t.startsWith("[") ? JSON.parse(t) : t.split(/\s+/);
 }
-$("preset").addEventListener("change", () => {
-  const p = $("preset").value;
-  $("presetCoding").classList.toggle("hidden", p !== "coding-agent");
-  $("presetJupyter").classList.toggle("hidden", p !== "jupyter");
-  $("presetCustom").classList.toggle("hidden", p !== "custom");
-});
+// ---- presets & services: data on the control plane (presets/<name>/preset.yaml, presets/services.yaml) ----
+let presetsByName = {};
+async function loadPresets() {
+  const list = await api("GET", "/presets");
+  presetsByName = Object.fromEntries(list.map((p) => [p.name, p]));
+  const current = $("preset").value;
+  $("preset").innerHTML = list.map((p) => `<option value="${p.name}">${p.name} — ${esc(p.description)}</option>`).join("");
+  $("preset").value = presetsByName[current] ? current : presetsByName["coding-agent"] ? "coding-agent" : list[0]?.name;
+  const catalog = await api("GET", "/services");
+  $("services").innerHTML = catalog.length ? catalog.map((s) => `
+    <div class="check"><input type="checkbox" id="svc-${s.name}" data-service="${s.name}">
+      <label for="svc-${s.name}">${s.name} <span class="muted">${esc(s.image)}${s.ready ? ` · ready on :${s.ready.port}` : ""}${Object.keys(s.sandbox_env).length ? ` · sets ${Object.keys(s.sandbox_env).join(", ")}` : ""}</span></label></div>`).join("")
+    : `<div class="muted">no catalog (presets/services.yaml)</div>`;
+  renderFields();
+}
+function renderFields() {
+  const p = presetsByName[$("preset").value];
+  if (!p) return;
+  $("presetDesc").textContent = (p.image ? `image ${p.image}` : "image: from the caller, else the control plane default")
+    + (p.services.length ? ` · services ${p.services.join(", ")}` : "") + (p.idle_timeout_s ? ` · idle ${p.idle_timeout_s / 60} min` : "");
+  $("fields").innerHTML = p.fields.map((f) => {
+    const id = `f-${f.name.replace(/\./g, "-")}`;
+    const hint = f.description ? ` <span class="muted">(${esc(f.description)})</span>` : "";
+    const label = `<label for="${id}">${f.name}${f.required ? " *" : ""}${hint}</label>`;
+    const attrs = `id="${id}" data-path="${f.name}" data-type="${f.type}"`;
+    if (f.type === "enum") return `${label}<select ${attrs}><option value="">${f.default ? esc(f.default) + " (default)" : "default"}</option>${f.values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("")}</select>`;
+    if (f.type === "bool") return `<div class="check"><input type="checkbox" ${attrs} data-default="${!!f.default}"${f.default ? " checked" : ""}><label for="${id}">${f.name}${hint}</label></div>`;
+    if (f.multiline) return `${label}<textarea ${attrs}></textarea>`;
+    const type = f.secret ? "password" : f.type === "int" ? "number" : "text";
+    const range = f.type === "int" ? `${f.min !== undefined ? ` min="${f.min}"` : ""}${f.max !== undefined ? ` max="${f.max}"` : ""}` : "";
+    return `${label}<input type="${type}" ${attrs}${range} placeholder="${f.default !== undefined ? esc(f.default) : ""}">`;
+  }).join("");
+  if (p.preview?.port) $("port").value = String(p.preview.port);
+}
+$("preset").addEventListener("change", renderFields);
+/** Non-empty field inputs → nested body paths (`llm.base_url` → body.llm.base_url), typed per the schema. */
+function collectFields(body) {
+  const p = presetsByName[$("preset").value];
+  for (const el of $("fields").querySelectorAll("[data-path]")) {
+    const { path, type } = el.dataset;
+    let v;
+    if (type === "bool") { if (el.checked === (el.dataset.default === "true")) continue; v = el.checked; }
+    else { v = el.value.trim(); if (v === "") continue; if (type === "int") v = Number(v); }
+    const parts = path.split("."); let cur = body;
+    for (const k of parts.slice(0, -1)) cur = cur[k] ??= {};
+    cur[parts.at(-1)] = v;
+    if (p.preview?.port_field === path) $("port").value = String(v);
+  }
+}
 
 async function refresh() {
   try {
+    if (!Object.keys(presetsByName).length) await loadPresets();
     renderHosts(await api("GET", "/hosts"));
     renderSessions(await api("GET", `/sessions?owner_id=${encodeURIComponent(owner())}`));
   } catch (e) {
@@ -304,26 +321,13 @@ $("create").onclick = async () => {
     const body = {
       owner_id: owner(), preset,
       image: $("image").value.trim() || undefined,
+      cmd: parseCmd($("cmd").value),
       env: parseEnv($("env").value), secret_env: parseEnv($("secretEnv").value),
     };
-    if (preset === "coding-agent") Object.assign(body, {
-      repo: $("repo").value.trim(),
-      prompt: $("prompt").value,
-      agent: $("agent").value || undefined,
-      model: $("model").value.trim() || undefined,
-      llm: { base_url: $("llmBase").value.trim() || undefined, api_key: $("llmKey").value || undefined },
-      secrets: { git_token: $("gitToken").value || undefined },
-    });
-    else if (preset === "jupyter") {
-      Object.assign(body, {
-        repo: $("jRepo").value.trim() || undefined,
-        ui: $("jUi").value,
-        port: Number($("jPort").value) || 8888,
-        secrets: { git_token: $("jGitToken").value || undefined },
-      });
-      $("port").value = String(body.port);
-    }
-    else body.cmd = parseCmd($("cmd").value);
+    collectFields(body);
+    const services = [...document.querySelectorAll("[data-service]:checked")].map((el) => el.dataset.service);
+    if (services.length) body.services = services;
+    if ($("compose").value.trim()) body.compose = $("compose").value;
     const s = await api("POST", "/sessions", body);
     note(`created ${s.id} (${s.status})`);
     refresh();

@@ -1,4 +1,6 @@
-// Core control-plane config. Preset-specific defaults live with each preset (src/cp/presets/).
+// Core control-plane config. Preset-specific defaults live with each preset (presets/<name>/preset.yaml).
+import { fileURLToPath } from "node:url";
+
 export type Env = Record<string, string | undefined>;
 
 export interface CpConfig {
@@ -7,7 +9,10 @@ export interface CpConfig {
   secret: string;
   publicUrl: string;       // http(s)://cp.example.com  (what browsers use)
   previewDomain: string;   // preview.cp.example.com   (wildcard)
+  /** Image for sessions whose preset implies none and whose caller sends none. */
   defaultImage: string;
+  /** Directory of presets/<name>/preset.yaml (+ services.yaml). DEVAGENTS_PRESETS_DIR; default = the repo's presets/. */
+  presetsDir: string;
   /** Operator-level env injected into every sandbox at placement time (never persisted).
    *  From DEVAGENTS_SANDBOX_ENV_<NAME>=value, plus the LLM_BASE_URL / LLM_API_KEY shorthands. */
   sandboxEnv: Record<string, string>;
@@ -44,7 +49,8 @@ export function loadConfig(env: Env = process.env): CpConfig {
     secret: env.DEVAGENTS_SECRET ?? serviceToken,
     publicUrl,
     previewDomain: env.DEVAGENTS_PREVIEW_DOMAIN ?? "preview.localhost",
-    defaultImage: env.DEVAGENTS_DEFAULT_IMAGE ?? "devagents-sandbox:latest",
+    defaultImage: env.DEVAGENTS_DEFAULT_IMAGE ?? "devagents-coding-agent:latest",
+    presetsDir: env.DEVAGENTS_PRESETS_DIR ?? fileURLToPath(new URL("../../presets", import.meta.url)),
     sandboxEnv,
     maxServices: Number(env.DEVAGENTS_MAX_SERVICES || 8),
     dbPath: env.DEVAGENTS_DB ?? "cp.db",

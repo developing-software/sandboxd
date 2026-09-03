@@ -27,6 +27,8 @@ export interface CreateOpts {
   alias?: string;
   /** Env set at container create (services). The sandbox gets its env at exec time instead. */
   env?: Record<string, string>;
+  /** Command override for a service (compose `command:`). The sandbox is always kept idle. */
+  cmd?: string[];
 }
 
 export interface Managed { id: string; sid: string }

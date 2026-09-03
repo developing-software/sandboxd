@@ -11,6 +11,8 @@ export interface ServiceSpec {
   env: Record<string, string>;
   /** Secret env, set at container create. Memory-only on the CP; visible in `docker inspect` on the host. */
   secret_env: Record<string, string>;
+  /** Command override (compose `command:`); null = the image's own. */
+  cmd: string[] | null;
   /** Block the sandbox until TCP `port` on the service accepts a connection, or fail the session after `timeout_s`. */
   ready: { port: number; timeout_s: number } | null;
 }

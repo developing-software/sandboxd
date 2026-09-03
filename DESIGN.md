@@ -13,11 +13,14 @@ self-hosted machines and supervise them through a browser terminal.
   command started in a PTY with some env, gone when it ends. Disposable.
   It may bring **services**: sidecar containers (Postgres, Redis, …) on a
   private per-session network, reachable from the sandbox by name, started
-  before it and removed with it. The core does not know what runs inside. **Presets** on the CP turn a
-  friendly request (repo + prompt + agent) into image/cmd/env; the built-in
-  `coding-agent` preset is the reason this service exists, `jupyter` runs a
-  notebook server behind the preview proxy, and any image that honours the
-  sandbox contract below is a valid use case.
+  before it and removed with it. The core does not know what runs inside. **Presets** turn a
+  friendly request (repo + prompt + agent) into image/cmd/env. A preset is a folder
+  of data, `presets/<name>/` (`preset.yaml` + `Dockerfile` + `entry.sh`), with its own
+  image: `coding-agent` is the reason this service exists, `vscode` opens a repo in
+  VS Code behind the preview proxy, `jupyter` does the same for a notebook server,
+  and any image that honours the sandbox contract below is a valid use case.
+  Services come from a **catalog** (`presets/services.yaml`, a compose file) or from
+  a compose document the caller sends as-is.
 - The control plane (**CP**) is the only API. It schedules sessions onto hosts,
   relays terminal bytes, proxies preview ports, and stores metadata. It is a
   single instance backed by SQLite and has no users of its own.
@@ -40,13 +43,13 @@ self-hosted machines and supervise them through a browser terminal.
 | 12 | Enrollment: daemon self-generates secret, CP sees fingerprint, pending + short code, admin approves | Join tokens; static shared secret; mTLS |
 | 13 | SQLite only; daemon is source of truth for running state | Redis (solves nothing without multi-instance) |
 | 14 | Raw Docker Engine API behind `SandboxDriver` | Sandcastle / TanStack sandbox (they want to own the agent run) |
-| 15 | One default image in-repo, `image:` override per session | Caller-supplied always; per-host image |
-| 19 | Agent is a per-session choice (`claude` \| `codex` \| `opencode` \| `shell`); one LLM gateway tuple (`base_url`, `api_key`, `model`) is mapped by the entry script onto each harness's own config | Claude-only; per-agent config schemas in the API |
+| 15 | Presets are data: `presets/<name>/preset.yaml` + `Dockerfile` + `entry.sh`, one image per preset (`devagents-<name>:latest`), `image:` override per session (revised 2026-09-03) | One image for every preset; presets as TypeScript modules; caller-supplied image always; per-host image |
+| 19 | Agent is a per-session choice (`claude` \| `codex` \| `opencode` \| `shell`); one LLM gateway tuple (`base_url`, `api_key`, `model`) is mapped by the entry script onto each harness's own config; defaults (agent, model) live in the image's entry and operators override them with `DEVAGENTS_SANDBOX_ENV_*` | Claude-only; per-agent config schemas in the API; per-preset env vars on the CP |
 | 16 | `Bun.serve` + `bun:sqlite`, zero runtime deps | Hono / Elysia |
 | 17 | `/dev` xterm.js page behind `DEVAGENTS_DEV=true` | No UI; real Svelte frontend |
 | 18 | One package, `src/{protocol,shared,cp,agent,dev}` | Bun workspaces |
-| 20 | Generic core (`image, cmd, env, secret_env`) + CP-side presets; the image is the plugin | Agent kinds baked into the protocol and daemon; driver plugins in the daemon |
-| 21 | Session may declare `services` (added 2026-09-03): sidecar containers on a per-session bridge network, resolved by the **parent app** (from the repo's own config, a catalog, wherever) and passed fully formed in the API; CP validates shape only | CP reads `.devagents.yaml` from the repo (CP would need provider APIs + a trust tier for repo-authored config); compose files; a CP-side service catalog |
+| 20 | Generic core (`image, cmd, env, secret_env, services`) + presets as a declarative field→env schema; the image is the plugin, its entry script owns the semantics | Agent kinds baked into the protocol and daemon; driver plugins in the daemon; per-preset code on the CP |
+| 21 | Session may declare `services` (added 2026-09-03): sidecar containers on a per-session bridge network. Given as catalog names (`presets/services.yaml`), as a **compose document** the CP translates itself (validated subset: image, environment, command, expose/ports → readiness port, depends_on → order; laptop keys ignored, host-affecting keys refused), or fully formed. The CP fetches nothing from repos; the parent app forwards the repo's compose file if it wants repo-authored services | CP reads `.devagents.yaml` from the repo (provider APIs + a trust tier for repo-authored config); compose as the runtime (`docker compose up` per session: plugin on every host, still needs filtering); docker inside the sandbox |
 
 ## Topology
 
@@ -134,7 +137,7 @@ session or one proxied TCP connection for a preview port.
 | host→cp | `hello{name, fingerprint, running: sid[], max_sessions}` |
 | cp→host | `hello.ok{host_id}` · `hello.pending{code}` · `hello.rejected` |
 | host→cp | `heartbeat{running, max}` every 10 s |
-| cp→host | `session.create{sid, image, cmd | null, idle_timeout_s, env, secret_env, services: [{name, image, env, secret_env, ready: {port, timeout_s} | null}]}` |
+| cp→host | `session.create{sid, image, cmd | null, idle_timeout_s, env, secret_env, services: [{name, image, env, secret_env, cmd | null, ready: {port, timeout_s} | null}]}` |
 | host→cp | `session.started{sid}` · `session.ended{sid, reason}` |
 | cp→host | `session.destroy{sid}` |
 | cp→host | `pty.open{sid, stream, cols, rows}` · `pty.resize{sid, cols, rows}` · `pty.close{stream}` |
@@ -151,32 +154,45 @@ GET    /hosts                          list (status, online, running/max)
 POST   /hosts/:id/approve   {code}
 POST   /hosts/:id/revoke
 POST   /sessions            core:   {owner_id, preset?, image?, cmd?: string[], env?, secret_env?, idle_timeout_s?,
-                                     services?: [{name, image, env?, secret_env?, ready?: {port, timeout_s?}}]}
+                                     services?: [name | {use, name?, env?, secret_env?} | {name, image, env?, secret_env?, cmd?, ready?: {port, timeout_s?}}],
+                                     compose?: string | object}
                             services: sidecars on a private per-session network, reachable from the sandbox as `name`
                                     (DNS label, `sandbox` reserved). Started in order before the sandbox; `ready` blocks
                                     until TCP `port` accepts (timeout default 60 s, max 600) or fails the session.
-                                    At most DEVAGENTS_MAX_SERVICES (8). The parent app resolves these however it likes
-                                    (repo config, catalog); the CP does not template or fetch anything (decision 21).
-                                    Non-secret halves are persisted and echoed in the session view.
-                            preset "coding-agent" (default when repo is given) adds:
-                                    {repo, prompt, base_branch?, branch?, setup?, agent?: claude|codex|opencode|shell, model?,
-                                     llm?: {base_url?, api_key?},          // OpenAI/Anthropic-compatible gateway (LiteLLM)
-                                     secrets?: {git_token?, anthropic_api_key?}}
-                                    → env REPO BRANCH BASE_BRANCH PROMPT AGENT MODEL SETUP [LLM_BASE_URL]
-                                      (SETUP = shell command run in the clone before the agent, e.g. `bun install`)
-                                      secret_env [GIT_TOKEN ANTHROPIC_API_KEY LLM_API_KEY]
-                                    defaults: agent = DEVAGENTS_DEFAULT_AGENT (shell if prompt empty),
-                                              model = DEVAGENTS_DEFAULT_MODEL (claude-sonnet-4-6), DEVAGENTS_CODEX_MODEL for codex
-                            preset "jupyter" adds: {repo?, ui?: lab|notebook, port?, secrets?: {git_token?}}
-                                    → image DEVAGENTS_JUPYTER_IMAGE (quay.io/jupyter/minimal-notebook), cmd = bash -lc <clone + jupyter>,
-                                      env JUPYTER_UI JUPYTER_PORT REPO, secret_env [GIT_TOKEN], idle default DEVAGENTS_JUPYTER_IDLE_S (4 h)
-                                      preview port = `port` (default 8888); Jupyter auth is off, the preview cookie is the gate
-                            preset "custom" (default otherwise): nothing implied.
-                            a preset may default image / cmd / idle_timeout_s; caller-supplied values win.
+                                    Sources, in start order: the preset's default services, the `services` list
+                                    (catalog names from GET /services, references with overrides, or full declarations),
+                                    then the `compose` document. Names must be unique across sources; at most
+                                    DEVAGENTS_MAX_SERVICES (8). Catalog services add their `sandbox_env` (e.g. DATABASE_URL)
+                                    under the session env. Non-secret halves are persisted and echoed in the session view.
+                            compose: a docker compose file, verbatim (YAML text or object). Per service: `build` without `image`
+                                    = the repo's own app, skipped; `image`, `environment` (map or list, `${X:-d}` interpolated
+                                    against an empty env), `command`, `depends_on` (order), readiness = `x-devagents.ready`
+                                    else `expose[0]` else the container port of `ports[0]`; `x-devagents.sandbox_env` /
+                                    `secret_env`. Ignored: ports, volumes, restart, healthcheck, networks, labels, deploy, ….
+                                    Refused (400 naming the key): entrypoint, privileged, cap_add, devices, network_mode,
+                                    pid, user, extra_hosts, sysctls, security_opt, volumes_from, extends, … (compose.ts).
+                            presets: `preset` names a folder in presets/; without it, the first preset whose `claims_when`
+                                    fields are present wins (coding-agent claims `repo`), else `custom`. Each preset's
+                                    fields (GET /presets) map onto env for its image; absent fields emit nothing, so
+                                    operator defaults survive. Shipped:
+                                    coding-agent  {repo, prompt?, agent?, model?, setup?, branch?, base_branch?, llm?: {base_url?, api_key?},
+                                                   secrets?: {git_token?, anthropic_api_key?}}
+                                                  → env REPO PROMPT AGENT MODEL SETUP BRANCH BASE_BRANCH LLM_BASE_URL,
+                                                    secret_env GIT_TOKEN ANTHROPIC_API_KEY LLM_API_KEY; image devagents-coding-agent
+                                                  entry.sh defaults: agent = claude (shell if prompt empty), model = claude-sonnet-4-6
+                                                  (CODEX_MODEL for codex), branch = devagents/<sid>
+                                    vscode        {repo?, port? (8080), secrets?: {git_token?}} → env REPO VSCODE_PORT; image devagents-vscode
+                                                  (code-server, auth off: the preview cookie is the gate); idle 4 h; preview = port
+                                    jupyter       {repo?, ui?: lab|notebook, port? (8888), secrets?: {git_token?}} → env REPO JUPYTER_UI
+                                                  JUPYTER_PORT; image devagents-jupyter (docker-stacks + entry); idle 4 h; preview = port
+                                    custom        nothing implied; image from the caller, else DEVAGENTS_DEFAULT_IMAGE
+                            a preset may default image / cmd / idle_timeout_s / services; caller-supplied values win.
                             caller env/secret_env are merged over the preset's. TERM and DEVAGENTS_SESSION_ID are reserved.
                             Operator defaults for every sandbox: DEVAGENTS_SANDBOX_ENV_<NAME>=value,
                             shorthands DEVAGENTS_LLM_BASE_URL / DEVAGENTS_LLM_API_KEY (or LLM_BASE_URL / LLM_API_KEY).
-                            Precedence: secret_env > env > operator.
+                            Precedence: secret_env > env > preset env > services' sandbox_env > operator > entry.sh default.
+GET    /presets                         [{name, description, image, cmd, idle_timeout_s, preview: {port, port_field}, services, fields: [{name, type, env, required, secret, default?, values?, min?, max?, multiline?, description?}]}]
+GET    /services                        [{name, image, cmd, ready, sandbox_env}]   the catalog (presets/services.yaml)
 GET    /sessions?owner_id=
 GET    /sessions/:id
 DELETE /sessions/:id
@@ -200,19 +216,32 @@ own entrypoint kept idle (`sleep infinity`), then execs `cmd` (default:
 Any TCP port it listens on can be previewed. That is all the daemon assumes;
 what the env means is between the caller and the image.
 
-**Services** are ordinary containers: the image's own command, `env` set at
+**Services** are ordinary containers: the image's own command (or `cmd`), `env` set at
 create, joined to the session's bridge network `devagents-<sid>` under their
 `name` as DNS alias (the sandbox is `sandbox`). A session without services stays
 on Docker's default bridge. Readiness = the daemon dialling `ready.port` every
 500 ms until it accepts. Teardown: sandbox, services in reverse order, network.
 Orphans from a previous daemon run are found by label and removed on start.
 
-The default image implements the `coding-agent` preset.
-`images/Dockerfile`: `debian:bookworm-slim` + git, curl, node, bun,
+**Presets** are folders: `presets/<name>/preset.yaml` (description, image, idle,
+preview port, default services, fields → env; validated at boot, see
+`src/cp/presets/schema.ts`), a `Dockerfile` (built by `bun run image` as the image
+the preset declares) and the scripts it copies in. Every image installs its entry at
+`/usr/local/bin/devagents-entry`, so `cmd` stays null. Field defaults that an
+operator should be able to override are *not* in the yaml: the entry script applies
+them when the env is unset, and `DEVAGENTS_SANDBOX_ENV_*` reaches the entry untouched
+because absent fields emit no env. `presets/services.yaml` is the catalog, an
+ordinary compose file read through `src/cp/compose.ts`.
+
+`presets/coding-agent/Dockerfile`: `debian:bookworm-slim` + git, curl, node, bun,
 `@anthropic-ai/claude-code`, `@openai/codex`, `opencode-ai`; user `dev`; `WORKDIR /workspace`.
-Entry (`images/entry.sh`, executed in the PTY): clone → `checkout -b $BRANCH` →
-launch the chosen agent → always fall through to `bash` so the user can inspect
-or `git push`. Empty prompt = `shell`. Gateway mapping (`LLM_BASE_URL` root, no `/v1`):
+Entry (`entry.sh`, executed in the PTY): default AGENT/MODEL → clone → `checkout -b $BRANCH` →
+`SETUP` → launch the chosen agent → always fall through to `bash` so the user can inspect
+or `git push`. Empty prompt = `shell`. `presets/vscode/Dockerfile`: `debian:bookworm-slim` +
+git + code-server; entry clones and execs `code-server --auth none` on `VSCODE_PORT`
+(the preview proxy's `x-forwarded-host` satisfies its origin check; `--trusted-origins '*'`
+as a fallback). `presets/jupyter/Dockerfile`: `quay.io/jupyter/minimal-notebook` + the entry,
+run as jovyan. Gateway mapping (`LLM_BASE_URL` root, no `/v1`):
 
 | agent | how the gateway is wired |
 |-------|--------------------------|
@@ -224,7 +253,7 @@ IP used for preview dialing.
 `SandboxDriver` interface (only `docker` implemented):
 
 ```ts
-create({sid, image, role: sandbox|service, network?, alias?, env?}): Promise<id>
+create({sid, image, role: sandbox|service, network?, alias?, env?, cmd?}): Promise<id>
 attach(id, cmd, env, size): Promise<PtyStream>   // docker exec Tty:true, hijacked; resize lives on the stream
 dial(id, port): Promise<Duplex>                  // TCP to container ip:port; also the readiness probe
 destroy(id): Promise<void>
@@ -239,7 +268,7 @@ hosts    (id, name, fingerprint UNIQUE, status pending|approved|revoked,
           approve_code, max_sessions, last_seen_at, created_at)
 sessions (id, owner_id, host_id NULL, status, ended_reason NULL, ended_detail NULL,
           preset, image, cmd NULL (JSON string[]), env (JSON object),
-          services (JSON [{name, image, env, ready}], secrets stripped), idle_timeout_s,
+          services (JSON [{name, image, env, cmd, ready}], secrets stripped), idle_timeout_s,
           created_at, started_at, ended_at, unknown_since NULL)
 PRAGMA user_version = 3   -- no migrations in v1; another version is refused at boot
 ```
@@ -253,16 +282,17 @@ survive a CP restart: on boot they are marked `ended/failed` and must be recreat
 ```
 src/protocol/   messages.ts  framing.ts            shared types + binary framing
 src/shared/     ids.ts  errors.ts  log.ts  bytes.ts
-src/cp/         main.ts  config.ts  store.ts  tokens.ts  scheduler.ts  sessions.ts  router.ts  http.ts  attach.ts
+src/cp/         main.ts  config.ts  store.ts  tokens.ts  scheduler.ts  sessions.ts  services.ts  compose.ts  env.ts  router.ts  http.ts  attach.ts
 src/cp/hosts/   conn.ts  enrollment.ts  hub.ts  service.ts    one HostConn per daemon; hub = registry + narrow interfaces
-src/cp/presets/ index.ts  types.ts  coding-agent.ts  jupyter.ts  jupyter.sh  custom.ts
+src/cp/presets/ index.ts  types.ts  schema.ts  preset.ts  loader.ts  catalog.ts    yaml → Preset; registry; service catalog
 src/cp/preview/ proxy.ts  http.ts  ws-bridge.ts  response-parser.ts  wsframe.ts
 src/agent/      main.ts  config.ts  tunnel.ts  driver.ts  docker.ts  pty.ts  sessions.ts
 src/dev/        index.html
-images/         Dockerfile  entry.sh  agent-setup.sh  git-askpass.sh
+presets/        build.ts  services.yaml                       one image per preset; the catalog is a compose file
+presets/<name>/ preset.yaml  Dockerfile  entry.sh  …          coding-agent  vscode  jupyter  custom (no image)
 ```
 
-Scripts: `bun run cp`, `bun run agent`, `bun test`.
+Scripts: `bun run cp`, `bun run agent`, `bun run image [preset…]`, `bun test`.
 
 ## Explicitly out of scope for v1
 

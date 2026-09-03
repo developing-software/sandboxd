@@ -4,6 +4,7 @@ import type { CpConfig } from "./config.ts";
 import type { Tokens } from "./tokens.ts";
 import type { HostService } from "./hosts/service.ts";
 import type { SessionService } from "./sessions.ts";
+import type { PresetInfo, CatalogView } from "./presets/index.ts";
 import type { AttachData } from "./attach.ts";
 import { HttpError, notFound, unauthorized } from "../shared/errors.ts";
 import { Router, makeCtx, type Ctx } from "./router.ts";
@@ -19,10 +20,15 @@ export class Api {
   constructor(
     private cfg: Pick<CpConfig, "serviceToken" | "dev">, private tokens: Tokens,
     private hosts: HostService, private sessions: SessionService,
+    private presets: { list(): PresetInfo[] }, private catalog: { list(): CatalogView[] },
   ) {
     const r = this.router;
     r.public("GET", "/healthz", () => json({ ok: true }));
     if (cfg.dev) r.public("GET", "/dev", () => devPage());
+
+    // What a caller can ask for: preset field schemas and the service catalog. Both are data on disk.
+    r.add("GET", "/presets", () => json(this.presets.list()));
+    r.add("GET", "/services", () => json(this.catalog.list()));
 
     r.add("GET", "/hosts", () => json(this.hosts.list()));
     r.add("POST", "/hosts/:id/approve", async (c) => {

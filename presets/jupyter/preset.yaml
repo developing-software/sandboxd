@@ -1,0 +1,10 @@
+# jupyter: JupyterLab (or classic Notebook) on the docker-stacks minimal image, previewed on `port`.
+# Idle defaults to 4 h because preview traffic does not count as activity (design decision 10).
+description: JupyterLab or classic Notebook behind the preview proxy
+idle_timeout_s: 14400
+preview: { port_field: port }
+fields:
+  repo: { type: string, env: REPO, description: "optional, cloned into the notebook root" }
+  ui:   { type: enum, values: [lab, notebook], default: lab, env: JUPYTER_UI }
+  port: { type: int, min: 1, max: 65535, default: 8888, env: JUPYTER_PORT }
+  secrets.git_token: { type: string, secret: true, env: GIT_TOKEN, description: "for private repos" }

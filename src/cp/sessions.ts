@@ -8,7 +8,8 @@ import type { PresetRegistry } from "./presets/index.ts";
 import { badRequest, conflict, notFound } from "../shared/errors.ts";
 import { newSessionId } from "../shared/ids.ts";
 import { validateEnv } from "./env.ts";
-import { validateServices } from "./services.ts";
+import { EMPTY_CATALOG, mergeServices, noServices, sandboxEnvOf, validateServices, type ServiceCatalog } from "./services.ts";
+import { parseCompose } from "./compose.ts";
 
 export { validateEnv } from "./env.ts";
 
@@ -29,9 +30,12 @@ export interface CreateSessionBody {
   env?: Record<string, string>;
   /** Extra secret env (never persisted) merged over what the preset produced. */
   secret_env?: Record<string, string>;
-  /** Sidecars on the session's private network. The parent app resolves these
-   *  (from the repo's own config, a catalog, wherever); the CP only validates shape. See services.ts. */
+  /** Sidecars on the session's private network: catalog names (`"postgres"`, see GET /services),
+   *  `{use, name?, env?}` references, or full `{name, image, ...}` declarations. See services.ts. */
   services?: unknown;
+  /** A docker compose document (YAML text or object); its services become sidecars. See compose.ts. */
+  compose?: unknown;
+  /** Preset-specific fields; see GET /presets for each preset's schema. */
   [presetField: string]: unknown;
 }
 
@@ -48,7 +52,7 @@ export class SessionService {
   constructor(
     private cfg: Pick<CpConfig, "defaultImage" | "publicUrl" | "previewDomain" | "maxServices">,
     private store: Store, private hosts: HostOnline, private sched: Scheduler,
-    private tokens: Tokens, private presets: PresetRegistry,
+    private tokens: Tokens, private presets: PresetRegistry, private catalog: ServiceCatalog = EMPTY_CATALOG,
   ) {}
 
   create(raw: unknown): SessionView {
@@ -63,10 +67,14 @@ export class SessionService {
     const expanded = preset.expand(id, b);
     const idle = Number(b.idle_timeout_s ?? expanded.idle_timeout_s ?? DEFAULT_IDLE_S);
     if (!Number.isFinite(idle) || idle < MIN_IDLE_S) throw badRequest(`idle_timeout_s must be >= ${MIN_IDLE_S}`);
-    // Caller-supplied values win over what the preset implied.
-    const env = { ...expanded.env, ...validateEnv("env", b.env) };
+    // Sidecars from every source, in start order: the preset's defaults, then the caller's list, then its compose file.
+    const services = mergeServices(
+      [expanded.services ?? noServices(), validateServices(b.services, this.catalog), parseCompose(b.compose)],
+      this.cfg.maxServices,
+    );
+    // Precedence: caller env > preset env > what services ask to inject (DATABASE_URL and friends).
+    const env = { ...sandboxEnvOf(services), ...expanded.env, ...validateEnv("env", b.env) };
     const secret_env = { ...expanded.secret_env, ...validateEnv("secret_env", b.secret_env) };
-    const services = validateServices(b.services, this.cfg.maxServices);
     const row = this.store.insertSession({
       id, owner_id: b.owner_id, preset: preset.name,
       image: (typeof b.image === "string" && b.image.trim()) || expanded.image || this.cfg.defaultImage,

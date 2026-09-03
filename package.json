@@ -9,7 +9,7 @@
     "dev:agent": "DEVAGENTS_URL=${DEVAGENTS_URL:-ws://localhost:8080} DEVAGENTS_AGENT_CONFIG=.data/host.json bun run src/agent/main.ts",
     "typecheck": "tsc --noEmit -p .",
     "test": "bun test",
-    "image": "docker build -t devagents-sandbox:latest images"
+    "image": "bun run presets/build.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

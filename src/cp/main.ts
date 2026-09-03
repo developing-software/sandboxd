@@ -7,7 +7,7 @@ import { HostService } from "./hosts/service.ts";
 import { Scheduler } from "./scheduler.ts";
 import { AttachBridge, type AttachData } from "./attach.ts";
 import { PreviewProxy, type PreviewWsData } from "./preview/proxy.ts";
-import { PresetRegistry, builtinPresets } from "./presets/index.ts";
+import { PresetRegistry, loadPresetDir, type LoadedPresets } from "./presets/index.ts";
 import { SessionService } from "./sessions.ts";
 import { Api } from "./http.ts";
 import { logger } from "../shared/log.ts";
@@ -18,9 +18,17 @@ process.on("unhandledRejection", (e) => log.error("unhandled rejection", { err: 
 process.on("uncaughtException", (e) => log.error("uncaught exception", { err: String(e), stack: e?.stack }));
 
 const cfg = loadConfig();
+// Presets and the service catalog are data on disk; a bad file is a boot error, not a runtime surprise.
+let loaded: LoadedPresets;
+try {
+  loaded = loadPresetDir(cfg.presetsDir);
+} catch (e) {
+  log.error("presets failed to load", { err: (e as Error).message });
+  process.exit(1);
+}
+const presets = new PresetRegistry(loaded.presets);
 const store = new Store(cfg.dbPath);
 const tokens = new Tokens(cfg.secret);
-const presets = new PresetRegistry(builtinPresets());
 
 const hub = new HostHub(store);
 const sched = new Scheduler(store, hub, cfg.sandboxEnv);
@@ -29,7 +37,8 @@ sched.boot();
 
 const attach = new AttachBridge(store, hub);
 const preview = new PreviewProxy(store, hub, tokens, cfg.previewDomain);
-const api = new Api(cfg, tokens, new HostService(store, hub), new SessionService(cfg, store, hub, sched, tokens, presets));
+const sessions = new SessionService(cfg, store, hub, sched, tokens, presets, loaded.catalog);
+const api = new Api(cfg, tokens, new HostService(store, hub), sessions, presets, loaded.catalog);
 
 type Data = TunnelData | AttachData | PreviewWsData;
 
@@ -68,4 +77,5 @@ const server = Bun.serve<Data>({
 });
 
 log.info("listening", { url: server.url.toString(), public: cfg.publicUrl, preview: `*.${cfg.previewDomain}`, dev: cfg.dev, db: cfg.dbPath });
-log.info("defaults", { image: cfg.defaultImage, sandbox_env: Object.keys(cfg.sandboxEnv), presets: presets.names });
+log.info("presets", { dir: loaded.dir, presets: presets.names, services: loaded.catalog.names });
+log.info("defaults", { image: cfg.defaultImage, sandbox_env: Object.keys(cfg.sandboxEnv) });

@@ -46,12 +46,12 @@ export class DockerDriver implements SandboxDriver {
     await r.text(); // drain progress stream until complete
   }
 
-  async create({ sid, image, role, network, alias, env }: CreateOpts): Promise<string> {
+  async create({ sid, image, role, network, alias, env, cmd }: CreateOpts): Promise<string> {
     const name = role === "sandbox" ? `devagents-${sid}` : `devagents-${sid}-${alias ?? "svc"}`;
     const body = {
       Image: image,
-      // The sandbox is kept idle so a PTY can be exec'd into it; a service runs whatever the image runs.
-      ...(role === "sandbox" ? { Cmd: ["sleep", "infinity"] } : {}),
+      // The sandbox is kept idle so a PTY can be exec'd into it; a service runs whatever the image runs unless overridden.
+      ...(role === "sandbox" ? { Cmd: ["sleep", "infinity"] } : cmd ? { Cmd: cmd } : {}),
       Env: env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : undefined,
       Labels: this.labels(sid, role),
       HostConfig: {

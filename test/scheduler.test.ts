@@ -129,10 +129,10 @@ test("service secrets travel in the spec by name and are never persisted", () =>
   host("h1", 1);
   const row = store.insertSession({
     id: "s_p", owner_id: "o", preset: "custom", image: "img", cmd: null, env: {}, idle_timeout_s: 60, created_at: 1,
-    services: [{ name: "db", image: "postgres:16", env: { POSTGRES_USER: "app" }, ready: { port: 5432, timeout_s: 30 } }],
+    services: [{ name: "db", image: "postgres:16", env: { POSTGRES_USER: "app" }, cmd: null, ready: { port: 5432, timeout_s: 30 } }],
   });
   sched.submit(row, {}, { db: { POSTGRES_PASSWORD: "pw" } });
   const svc = hub.created[0]!.spec.services[0]!;
-  expect(svc).toEqual({ name: "db", image: "postgres:16", env: { POSTGRES_USER: "app" }, secret_env: { POSTGRES_PASSWORD: "pw" }, ready: { port: 5432, timeout_s: 30 } });
+  expect(svc).toEqual({ name: "db", image: "postgres:16", env: { POSTGRES_USER: "app" }, secret_env: { POSTGRES_PASSWORD: "pw" }, cmd: null, ready: { port: 5432, timeout_s: 30 } });
   expect(JSON.stringify(store.db.query("SELECT * FROM sessions").all())).not.toContain("pw");
 });

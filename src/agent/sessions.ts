@@ -59,6 +59,7 @@ export class SessionManager {
       for (const svc of spec.services) {
         const id = await this.driver.create({
           sid, image: svc.image, role: "service", network: network!, alias: svc.name, env: { ...svc.env, ...svc.secret_env },
+          ...(svc.cmd ? { cmd: svc.cmd } : {}),
         });
         services.push(id);
         if (svc.ready) await this.waitReady(id, svc);
