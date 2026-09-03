@@ -1,3 +1,6 @@
+// Core control-plane config. Preset-specific defaults live with each preset (src/cp/presets/).
+export type Env = Record<string, string | undefined>;
+
 export interface CpConfig {
   port: number;
   serviceToken: string;
@@ -8,17 +11,13 @@ export interface CpConfig {
   /** Operator-level env injected into every sandbox at placement time (never persisted).
    *  From DEVAGENTS_SANDBOX_ENV_<NAME>=value, plus the LLM_BASE_URL / LLM_API_KEY shorthands. */
   sandboxEnv: Record<string, string>;
-  /** Defaults for the built-in `coding-agent` preset. */
-  codingAgent: { defaultAgent: string; defaultModel: string | null; codexModel: string | null };
-  /** Defaults for the built-in `jupyter` preset. */
-  jupyter: { image: string; idleTimeoutS: number };
   dbPath: string;
   dev: boolean;
 }
 
 const SANDBOX_ENV_PREFIX = "DEVAGENTS_SANDBOX_ENV_";
 
-export function loadConfig(env = process.env): CpConfig {
+export function loadConfig(env: Env = process.env): CpConfig {
   let serviceToken = env.DEVAGENTS_SERVICE_TOKEN;
   if (!serviceToken) {
     serviceToken = "dev-token";
@@ -45,16 +44,6 @@ export function loadConfig(env = process.env): CpConfig {
     previewDomain: env.DEVAGENTS_PREVIEW_DOMAIN ?? "preview.localhost",
     defaultImage: env.DEVAGENTS_DEFAULT_IMAGE ?? "devagents-sandbox:latest",
     sandboxEnv,
-    codingAgent: {
-      defaultAgent: env.DEVAGENTS_DEFAULT_AGENT || "claude",
-      defaultModel: env.DEVAGENTS_DEFAULT_MODEL || "claude-sonnet-4-6",
-      // Codex only speaks the Responses API; through LiteLLM that path is OpenAI-models-only in practice.
-      codexModel: env.DEVAGENTS_CODEX_MODEL || null,
-    },
-    jupyter: {
-      image: env.DEVAGENTS_JUPYTER_IMAGE || "quay.io/jupyter/minimal-notebook:latest",
-      idleTimeoutS: Number(env.DEVAGENTS_JUPYTER_IDLE_S || 4 * 3600),
-    },
     dbPath: env.DEVAGENTS_DB ?? "cp.db",
     dev: env.DEVAGENTS_DEV === "true" || env.DEVAGENTS_DEV === "1",
   };

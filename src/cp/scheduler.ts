@@ -1,19 +1,36 @@
 // Placement + FIFO queue + reconciliation. Secrets for queued sessions live
 // only here, in memory; they are never written to the store.
 import type { EndReason, SessionSpec } from "../protocol/messages.ts";
-import type { Store, SessionRow } from "./store.ts";
-import type { HostHub } from "./tunnel.ts";
+import type { Store, Session } from "./store.ts";
+import type { HostPlacement, HubEvents } from "./hosts/hub.ts";
 import { logger } from "../shared/log.ts";
 
 const log = logger("sched");
 const UNKNOWN_GRACE_MS = 90_000;
 
-export class Scheduler {
+export interface Candidate { hostId: string; free: number }
+
+/** Placement policy: choose one host among those with free slots, or null to queue. */
+export interface Placement { pick(candidates: Candidate[]): string | null }
+
+/** Design decision 8: the host with the most free slots wins. */
+export const mostFreeSlots: Placement = {
+  pick(candidates) {
+    let best: Candidate | null = null;
+    for (const c of candidates) if (!best || c.free > best.free) best = c;
+    return best?.hostId ?? null;
+  },
+};
+
+export class Scheduler implements HubEvents {
   private secrets = new Map<string, Record<string, string>>();
   private timer: ReturnType<typeof setInterval>;
 
   /** `sandboxEnv` is operator-level env merged under every session's env at placement; never persisted. */
-  constructor(private store: Store, private hub: HostHub, private sandboxEnv: Record<string, string> = {}) {
+  constructor(
+    private store: Store, private hub: HostPlacement,
+    private sandboxEnv: Record<string, string> = {}, private placement: Placement = mostFreeSlots,
+  ) {
     this.timer = setInterval(() => this.reapUnknown(), 15_000);
   }
 
@@ -26,9 +43,9 @@ export class Scheduler {
     }
   }
 
-  submit(row: SessionRow, secret_env: Record<string, string>) {
-    this.secrets.set(row.id, secret_env);
-    if (!this.place(row)) log.info("queued", { sid: row.id, position: this.queuePosition(row.id) });
+  submit(s: Session, secret_env: Record<string, string>) {
+    this.secrets.set(s.id, secret_env);
+    if (!this.place(s)) log.info("queued", { sid: s.id, position: this.queuePosition(s.id) });
   }
 
   queuePosition(sid: string): number | null {
@@ -37,51 +54,46 @@ export class Scheduler {
   }
 
   drain() {
-    for (const row of this.store.queuedSessions()) if (!this.place(row)) break;
+    for (const s of this.store.queuedSessions()) if (!this.place(s)) break;
   }
 
-  private pickHost(): string | null {
-    let best: { id: string; free: number } | null = null;
+  private candidates(): Candidate[] {
+    const out: Candidate[] = [];
     for (const h of this.store.listHosts()) {
       if (h.status !== "approved") continue;
       const cap = this.hub.capacity(h.id);
       if (!cap) continue;
       const free = cap.max - cap.running;
-      if (free <= 0) continue;
-      if (!best || free > best.free) best = { id: h.id, free };
+      if (free > 0) out.push({ hostId: h.id, free });
     }
-    return best?.id ?? null;
+    return out;
   }
 
-  private place(row: SessionRow): boolean {
-    const hostId = this.pickHost();
+  private place(s: Session): boolean {
+    const hostId = this.placement.pick(this.candidates());
     if (!hostId) return false;
-    const env: Record<string, string> = JSON.parse(row.env);
     // Precedence: session secret_env > session env > operator sandboxEnv.
     // Operator env travels as secret_env because it may hold keys (e.g. LLM_API_KEY) and is never persisted.
     const secret_env: Record<string, string> = { ...this.sandboxEnv };
-    for (const k of Object.keys(env)) delete secret_env[k];
-    Object.assign(secret_env, this.secrets.get(row.id) ?? {});
-    const spec: SessionSpec = {
-      sid: row.id, image: row.image, cmd: row.cmd ? JSON.parse(row.cmd) : null,
-      idle_timeout_s: row.idle_timeout_s, env, secret_env,
-    };
+    for (const k of Object.keys(s.env)) delete secret_env[k];
+    Object.assign(secret_env, this.secrets.get(s.id) ?? {});
+    const spec: SessionSpec = { sid: s.id, image: s.image, cmd: s.cmd, idle_timeout_s: s.idle_timeout_s, env: { ...s.env }, secret_env };
     if (!this.hub.createSession(hostId, spec)) return false;
-    this.secrets.delete(row.id);
-    this.store.markCreating(row.id, hostId);
-    log.info("placed", { sid: row.id, hostId });
+    this.secrets.delete(s.id);
+    this.store.markCreating(s.id, hostId);
+    log.info("placed", { sid: s.id, hostId });
     return true;
   }
 
-  cancel(row: SessionRow) {
-    this.secrets.delete(row.id);
-    if (row.status === "queued") { this.store.markEnded(row.id, "closed"); return; }
-    if (row.host_id) this.hub.destroySession(row.host_id, row.id);
-    if (!row.host_id || !this.hub.isOnline(row.host_id)) this.store.markEnded(row.id, "closed", "host offline at close");
+  cancel(s: Session) {
+    this.secrets.delete(s.id);
+    if (s.status === "queued") { this.store.markEnded(s.id, "closed"); return; }
+    if (s.host_id) this.hub.destroySession(s.host_id, s.id);
+    if (!s.host_id || !this.hub.isOnline(s.host_id)) this.store.markEnded(s.id, "closed", "host offline at close");
   }
 
-  // ---- hub events ----
-  onHostOnline(hostId: string, running: string[]) {
+  // ---- HubEvents ----
+  hostOnline(hostId: string, running: string[]) {
     const known = new Set(running);
     for (const s of this.store.activeSessionsOnHost(hostId)) {
       if (known.has(s.id)) this.store.markKnown(s.id);
@@ -89,9 +101,9 @@ export class Scheduler {
     }
     this.drain();
   }
-  onHeartbeat() { this.drain(); }
-  onSessionStarted(sid: string) { this.store.markRunning(sid); }
-  onSessionEnded(sid: string, reason: EndReason, detail?: string) {
+  heartbeat() { this.drain(); }
+  sessionStarted(sid: string) { this.store.markRunning(sid); }
+  sessionEnded(sid: string, reason: EndReason, detail?: string) {
     this.secrets.delete(sid);
     this.store.markEnded(sid, reason, detail);
     this.drain();

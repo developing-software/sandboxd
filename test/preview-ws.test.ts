@@ -3,15 +3,15 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import { Store } from "../src/cp/store.ts";
 import { Tokens } from "../src/cp/tokens.ts";
-import { COOKIE, PreviewProxy, type PreviewWsData } from "../src/cp/preview.ts";
-import type { HostHub } from "../src/cp/tunnel.ts";
+import { COOKIE, PreviewProxy, type PreviewWsData } from "../src/cp/preview/proxy.ts";
+import type { PortDialer } from "../src/cp/hosts/hub.ts";
 
 const SID = "s_abc234", HOST = "h1";
 let upstream: ReturnType<typeof Bun.serve>, cp: ReturnType<typeof Bun.serve>;
 let cookie: string;
 const seen: { path: string; headers: Record<string, string> }[] = [];
 
-class FakeHub {
+class FakeHub implements PortDialer {
   isOnline(id: string) { return id === HOST; }
   async dialPort(_h: string, _sid: string, port: number, sub: { onData(d: Uint8Array): void; onClose(): void }) {
     const sock = await Bun.connect({
@@ -53,11 +53,11 @@ beforeAll(() => {
   const store = new Store(":memory:");
   store.insertPendingHost({ id: HOST, name: HOST, fingerprint: "fp", approve_code: "AAAA-AA", max_sessions: 1 });
   store.approveHost(HOST);
-  store.insertSession({ id: SID, owner_id: "o", preset: "custom", image: "img", cmd: null, env: "{}", idle_timeout_s: 60, created_at: 1 });
+  store.insertSession({ id: SID, owner_id: "o", preset: "custom", image: "img", cmd: null, env: {}, idle_timeout_s: 60, created_at: 1 });
   store.markCreating(SID, HOST); store.markRunning(SID);
   const tokens = new Tokens("secret");
   cookie = `${COOKIE}=${tokens.sign({ k: "preview-cookie", sid: SID, port: upstream.port! }, 60_000)}`;
-  const proxy = new PreviewProxy(store, new FakeHub() as unknown as HostHub, tokens, "preview.localhost");
+  const proxy = new PreviewProxy(store, new FakeHub(), tokens, "preview.localhost");
 
   cp = Bun.serve<PreviewWsData>({
     port: 0,

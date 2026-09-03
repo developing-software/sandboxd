@@ -3,7 +3,7 @@
 import { encodeFrame, decodeFrame } from "../protocol/framing.ts";
 import { parseMsg, type CpMsg, type HostMsg } from "../protocol/messages.ts";
 import type { AgentConfig } from "./config.ts";
-import type { SandboxDriver, Duplex } from "./docker.ts";
+import type { SandboxDriver, Duplex } from "./driver.ts";
 import type { SessionManager } from "./sessions.ts";
 import { logger } from "../shared/log.ts";
 
@@ -45,8 +45,7 @@ export class Tunnel {
     }
   }
 
-  private sendBinary(
-stream: number, data: Uint8Array) {
+  private sendBinary(stream: number, data: Uint8Array) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(encodeFrame(stream, data));
   }
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { proxyOnce } from "../src/cp/preview.ts";
+import { proxyOnce } from "../src/cp/preview/http.ts";
 
 const req = () => new Request("http://3000-s_x.preview.localhost/", { method: "GET" });
 

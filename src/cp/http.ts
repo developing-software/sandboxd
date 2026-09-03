@@ -1,49 +1,57 @@
-// Parent-app-facing HTTP API. Auth = service token; every session call
-// carries owner_id and the CP enforces ownership. No users live here.
-type Upgrader = { upgrade(req: Request, opts: { data: AttachData }): boolean };
+// Parent-app-facing HTTP API: a thin route table over the host and session
+// services. Auth = service token, except for the few public routes below.
 import type { CpConfig } from "./config.ts";
-import type { Store } from "./store.ts";
-import type { HostHub } from "./tunnel.ts";
-import type { Scheduler } from "./scheduler.ts";
 import type { Tokens } from "./tokens.ts";
-import { HttpError, badRequest, conflict, notFound, unauthorized } from "../shared/errors.ts";
-import { newSessionId } from "../shared/ids.ts";
-import { PRESETS, PRESET_NAMES, validateEnv, type CodingAgentFields, type JupyterFields } from "./presets.ts";
+import type { HostService } from "./hosts/service.ts";
+import type { SessionService } from "./sessions.ts";
 import type { AttachData } from "./attach.ts";
+import { HttpError, notFound, unauthorized } from "../shared/errors.ts";
+import { Router, makeCtx, type Ctx } from "./router.ts";
 import { logger } from "../shared/log.ts";
 
 const log = logger("api");
 
-const ATTACH_TTL_MS = 60_000;
-const PREVIEW_TTL_MS = 10 * 60_000;
-
-/** Core fields are generic; `preset` decides which extra fields mean something.
- *  Default preset: coding-agent when `repo` is given, custom otherwise. */
-export interface CreateSessionBody extends CodingAgentFields, JupyterFields {
-  owner_id: string;
-  preset?: string;
-  image?: string;
-  idle_timeout_s?: number;
-  /** Command exec'd in the PTY. Omit for the image's default entry. */
-  cmd?: string[];
-  /** Extra env (non-secret, persisted) merged over what the preset produced. */
-  env?: Record<string, string>;
-  /** Extra secret env (never persisted) merged over what the preset produced. */
-  secret_env?: Record<string, string>;
-}
+type Upgrader = { upgrade(req: Request, opts: { data: AttachData }): boolean };
 
 export class Api {
+  private router = new Router();
+
   constructor(
-    private cfg: CpConfig, private store: Store, private hub: HostHub,
-    private sched: Scheduler, private tokens: Tokens,
-  ) {}
+    private cfg: Pick<CpConfig, "serviceToken" | "dev">, private tokens: Tokens,
+    private hosts: HostService, private sessions: SessionService,
+  ) {
+    const r = this.router;
+    r.public("GET", "/healthz", () => json({ ok: true }));
+    if (cfg.dev) r.public("GET", "/dev", () => devPage());
+
+    r.add("GET", "/hosts", () => json(this.hosts.list()));
+    r.add("POST", "/hosts/:id/approve", async (c) => {
+      const b = await c.json<{ code?: string }>();
+      this.hosts.approve(c.params.id!, b.code);
+      return json({ ok: true });
+    });
+    r.add("POST", "/hosts/:id/revoke", (c) => { this.hosts.revoke(c.params.id!); return json({ ok: true }); });
+
+    r.add("POST", "/sessions", async (c) => json(this.sessions.create(await c.json()), 201));
+    r.add("GET", "/sessions", (c) => json(this.sessions.list(c.url.searchParams.get("owner_id") ?? undefined)));
+    r.add("GET", "/sessions/:id", (c) => json(this.sessions.get(c.params.id!, ownerOf(c))));
+    r.add("DELETE", "/sessions/:id", (c) => json(this.sessions.cancel(c.params.id!, ownerOf(c))));
+    r.add("POST", "/sessions/:id/attach-token", async (c) => {
+      const b = await c.json<{ owner_id?: string }>();
+      return json(this.sessions.attachToken(c.params.id!, ownerOf(c, b)));
+    });
+    r.add("POST", "/sessions/:id/preview-token", async (c) => {
+      const b = await c.json<{ owner_id?: string; port?: number }>();
+      return json(this.sessions.previewToken(c.params.id!, ownerOf(c, b), b.port));
+    });
+  }
 
   async handle(req: Request, server: Upgrader): Promise<Response> {
     try {
       return await this.route(req, server);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status);
-      console.error(e);
+      log.error("unhandled", { err: String(e), stack: (e as Error)?.stack });
       return json({ error: "internal error" }, 500);
     }
   }
@@ -51,131 +59,36 @@ export class Api {
   private async route(req: Request, server: Upgrader): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
-    const m = req.method;
 
-    if (path === "/healthz") return json({ ok: true });
+    // The attach socket is its own thing: token-gated, and it has to upgrade.
+    if (path === "/attach" && req.method === "GET") return this.attach(req, url, server);
 
-    if (path === "/attach") {
-      const p = this.tokens.verify(url.searchParams.get("token"), "attach");
-      if (!p) return json({ error: "invalid or expired attach token" }, 401);
-      const data: AttachData = {
-        kind: "attach", sid: p.sid, pty: null,
-        cols: Number(url.searchParams.get("cols") ?? 120) || 120,
-        rows: Number(url.searchParams.get("rows") ?? 40) || 40,
-      };
-      return server.upgrade(req, { data }) ? new Response(null, { status: 101 }) : json({ error: "websocket upgrade required" }, 426);
-    }
-
-    if (path === "/dev" && this.cfg.dev && m === "GET") return this.dev();
-
-    // Everything below needs the service token.
-    if (req.headers.get("authorization") !== `Bearer ${this.cfg.serviceToken}`) throw unauthorized();
-
-    if (path === "/hosts" && m === "GET") {
-      return json(this.store.listHosts().map((h) => ({
-        id: h.id, name: h.name, status: h.status, approve_code: h.status === "pending" ? h.approve_code : undefined,
-        online: this.hub.isOnline(h.id), capacity: this.hub.capacity(h.id), last_seen_at: h.last_seen_at, created_at: h.created_at,
-      })));
-    }
-    let mm: RegExpExecArray | null;
-    if ((mm = /^\/hosts\/([^/]+)\/approve$/.exec(path)) && m === "POST") {
-      const host = this.store.hostById(mm[1]!) ?? (() => { throw notFound("host"); })();
-      const body = await readJson<{ code?: string }>(req);
-      if (host.status !== "pending") throw conflict(`host is ${host.status}`);
-      if (!body.code || body.code.toUpperCase() !== host.approve_code) throw badRequest("approval code does not match");
-      this.store.approveHost(host.id);
-      log.info("host approved", { hostId: host.id, name: host.name });
-      this.hub.notifyApproved(host.id);
-      return json({ ok: true });
-    }
-    if ((mm = /^\/hosts\/([^/]+)\/revoke$/.exec(path)) && m === "POST") {
-      if (!this.store.hostById(mm[1]!)) throw notFound("host");
-      this.store.revokeHost(mm[1]!);
-      return json({ ok: true });
-    }
-
-    if (path === "/sessions" && m === "POST") return this.createSession(await readJson<CreateSessionBody>(req));
-    if (path === "/sessions" && m === "GET") {
-      return json(this.store.listSessions(url.searchParams.get("owner_id") ?? undefined).map((s) => this.view(s)));
-    }
-    if ((mm = /^\/sessions\/([^/]+)$/.exec(path))) {
-      const s = this.owned(mm[1]!, url.searchParams.get("owner_id"));
-      if (m === "GET") return json(this.view(s));
-      if (m === "DELETE") { this.sched.cancel(s); return json(this.view(this.store.session(s.id)!)); }
-    }
-    if ((mm = /^\/sessions\/([^/]+)\/attach-token$/.exec(path)) && m === "POST") {
-      const body = await readJson<{ owner_id?: string }>(req);
-      const s = this.owned(mm[1]!, body.owner_id ?? url.searchParams.get("owner_id"));
-      if (s.status !== "running") throw conflict(`session is ${s.status}`);
-      const token = this.tokens.sign({ k: "attach", sid: s.id }, ATTACH_TTL_MS);
-      const ws = this.cfg.publicUrl.replace(/^http/, "ws");
-      return json({ token, wss_url: `${ws}/attach?token=${token}`, expires_in_s: ATTACH_TTL_MS / 1000 });
-    }
-    if ((mm = /^\/sessions\/([^/]+)\/preview-token$/.exec(path)) && m === "POST") {
-      const body = await readJson<{ owner_id?: string; port?: number }>(req);
-      const s = this.owned(mm[1]!, body.owner_id ?? url.searchParams.get("owner_id"));
-      const port = Number(body.port);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw badRequest("port must be 1-65535");
-      const token = this.tokens.sign({ k: "preview", sid: s.id, port }, PREVIEW_TTL_MS);
-      const pub = new URL(this.cfg.publicUrl);
-      const portSuffix = pub.port ? `:${pub.port}` : "";
-      const urlOut = `${pub.protocol}//${port}-${s.id}.${this.cfg.previewDomain}${portSuffix}/?t=${token}`;
-      return json({ token, url: urlOut, expires_in_s: PREVIEW_TTL_MS / 1000 });
-    }
-
-    throw notFound("route");
+    const m = this.router.match(req.method, path);
+    if (!m) throw notFound("route");
+    if (m.auth && req.headers.get("authorization") !== `Bearer ${this.cfg.serviceToken}`) throw unauthorized();
+    return m.handler(makeCtx(req, url, m.params));
   }
 
-  private createSession(b: CreateSessionBody): Response {
-    if (!b.owner_id || typeof b.owner_id !== "string") throw badRequest("owner_id is required");
-    const id = newSessionId();
-    const preset = b.preset ?? (b.repo ? "coding-agent" : "custom");
-    const expand = PRESETS[preset] ?? (() => { throw badRequest(`preset must be one of ${PRESET_NAMES.join(", ")}`); })();
-    if (b.cmd !== undefined && (!Array.isArray(b.cmd) || b.cmd.length === 0 || !b.cmd.every((c) => typeof c === "string"))) {
-      throw badRequest("cmd must be a non-empty array of strings");
-    }
-    const expanded = expand(id, b, this.cfg);
-    const idle = Number(b.idle_timeout_s ?? expanded.idle_timeout_s ?? 1800);
-    if (!Number.isFinite(idle) || idle < 60) throw badRequest("idle_timeout_s must be >= 60");
-    const cmd = b.cmd ?? expanded.cmd ?? null;
-    const env = { ...expanded.env, ...validateEnv("env", b.env) };
-    const secret_env = { ...expanded.secret_env, ...validateEnv("secret_env", b.secret_env) };
-    const row = this.store.insertSession({
-      id, owner_id: b.owner_id, preset, image: b.image?.trim() || expanded.image || this.cfg.defaultImage,
-      cmd: cmd ? JSON.stringify(cmd) : null, env: JSON.stringify(env),
-      idle_timeout_s: idle, created_at: Date.now(),
-    });
-    this.sched.submit(row, secret_env);
-    return json(this.view(this.store.session(id)!), 201);
-  }
-
-  private owned(sid: string, owner_id: string | null) {
-    const s = this.store.session(sid);
-    if (!s || (owner_id && s.owner_id !== owner_id)) throw notFound("session");
-    if (!owner_id) throw badRequest("owner_id is required");
-    return s;
-  }
-
-  private view(s: ReturnType<Store["session"]> & object) {
-    return {
-      id: s.id, owner_id: s.owner_id, status: s.status, host_id: s.host_id,
-      host_online: s.host_id ? this.hub.isOnline(s.host_id) : null,
-      queue_position: s.status === "queued" ? this.sched.queuePosition(s.id) : null,
-      ended_reason: s.ended_reason, ended_detail: s.ended_detail,
-      preset: s.preset, image: s.image, cmd: s.cmd ? JSON.parse(s.cmd) : null, env: JSON.parse(s.env),
-      idle_timeout_s: s.idle_timeout_s, created_at: s.created_at, started_at: s.started_at, ended_at: s.ended_at,
+  private attach(req: Request, url: URL, server: Upgrader): Response {
+    const p = this.tokens.verify(url.searchParams.get("token"), "attach");
+    if (!p) return json({ error: "invalid or expired attach token" }, 401);
+    const data: AttachData = {
+      kind: "attach", sid: p.sid, pty: null,
+      cols: Number(url.searchParams.get("cols") ?? 120) || 120,
+      rows: Number(url.searchParams.get("rows") ?? 40) || 40,
     };
-  }
-
-  private async dev() {
-    // Re-read on every request so edits show up on reload without a restart.
-    const html = await Bun.file(new URL("../dev/index.html", import.meta.url)).text();
-    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return server.upgrade(req, { data }) ? new Response(null, { status: 101 }) : json({ error: "websocket upgrade required" }, 426);
   }
 }
 
-async function readJson<T>(req: Request): Promise<T> {
-  try { return (await req.json()) as T; } catch { throw badRequest("invalid JSON body"); }
+/** owner_id from the body when there is one, else the query string. */
+const ownerOf = (c: Ctx, body?: { owner_id?: string }) => body?.owner_id ?? c.url.searchParams.get("owner_id");
+
+async function devPage() {
+  // Re-read on every request so edits show up on reload without a restart.
+  const html = await Bun.file(new URL("../dev/index.html", import.meta.url)).text();
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
+
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });

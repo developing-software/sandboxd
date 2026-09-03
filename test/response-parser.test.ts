@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ResponseParser } from "../src/cp/preview.ts";
+import { ResponseParser } from "../src/cp/preview/response-parser.ts";
 
 const b = (s: string) => new TextEncoder().encode(s);
 const s = (u: Uint8Array) => new TextDecoder().decode(u);

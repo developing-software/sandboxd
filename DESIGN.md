@@ -227,11 +227,13 @@ survive a CP restart: on boot they are marked `ended/failed` and must be recreat
 ## Repo layout
 
 ```
-src/protocol/   messages.ts  framing.ts        shared types + binary framing
-src/shared/     ids.ts  errors.ts  log.ts
-src/cp/         main.ts  http.ts  presets.ts  tunnel.ts  scheduler.ts  store.ts
-                attach.ts  preview.ts  wsframe.ts  tokens.ts
-src/agent/      main.ts  config.ts  tunnel.ts  docker.ts  pty.ts  sessions.ts
+src/protocol/   messages.ts  framing.ts            shared types + binary framing
+src/shared/     ids.ts  errors.ts  log.ts  bytes.ts
+src/cp/         main.ts  config.ts  store.ts  tokens.ts  scheduler.ts  sessions.ts  router.ts  http.ts  attach.ts
+src/cp/hosts/   conn.ts  enrollment.ts  hub.ts  service.ts    one HostConn per daemon; hub = registry + narrow interfaces
+src/cp/presets/ index.ts  types.ts  coding-agent.ts  jupyter.ts  jupyter.sh  custom.ts
+src/cp/preview/ proxy.ts  http.ts  ws-bridge.ts  response-parser.ts  wsframe.ts
+src/agent/      main.ts  config.ts  tunnel.ts  driver.ts  docker.ts  pty.ts  sessions.ts
 src/dev/        index.html
 images/         Dockerfile  entry.sh  agent-setup.sh  git-askpass.sh
 ```

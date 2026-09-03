@@ -1,6 +1,7 @@
 // Minimal RFC 6455 frame codec. The preview proxy re-frames between the browser
 // (Bun's server-side WebSocket, which hands us whole messages) and the upstream
 // socket inside the sandbox (raw bytes over a tunnel stream). No extensions.
+import { concat } from "../../shared/bytes.ts";
 
 export const OP = { CONT: 0, TEXT: 1, BINARY: 2, CLOSE: 8, PING: 9, PONG: 10 } as const;
 
@@ -88,19 +89,11 @@ export class WsFrameParser {
       this.frag.push(payload); this.fragBytes += len;
       if (this.fragBytes > this.maxMessage) throw new Error("websocket message too large");
       if (!fin) continue;
-      const data = this.frag.length === 1 ? this.frag[0]! : concat(this.frag, this.fragBytes);
-      out.push({ opcode: this.fragOp, data });
+      out.push({ opcode: this.fragOp, data: concat(this.frag) });
       this.fragOp = -1; this.frag = []; this.fragBytes = 0;
     }
     return out;
   }
-}
-
-function concat(parts: Uint8Array[], size: number): Uint8Array {
-  const out = new Uint8Array(size);
-  let o = 0;
-  for (const p of parts) { out.set(p, o); o += p.length; }
-  return out;
 }
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";

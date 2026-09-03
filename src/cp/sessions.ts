@@ -1,0 +1,137 @@
+// Session use cases behind the HTTP API. Auth has already happened; every call
+// carries owner_id and ownership is enforced here (the CP has no user table).
+import type { CpConfig } from "./config.ts";
+import type { Store, Session } from "./store.ts";
+import type { Scheduler } from "./scheduler.ts";
+import type { Tokens } from "./tokens.ts";
+import type { PresetRegistry } from "./presets/index.ts";
+import { badRequest, conflict, notFound } from "../shared/errors.ts";
+import { newSessionId } from "../shared/ids.ts";
+
+const ATTACH_TTL_MS = 60_000;
+const PREVIEW_TTL_MS = 10 * 60_000;
+const DEFAULT_IDLE_S = 1800;
+const MIN_IDLE_S = 60;
+
+/** Core fields are generic; the resolved preset reads its own extra fields from the same body. */
+export interface CreateSessionBody {
+  owner_id: string;
+  preset?: string;
+  image?: string;
+  idle_timeout_s?: number;
+  /** Command exec'd in the PTY. Omit for the image's default entry. */
+  cmd?: string[];
+  /** Extra env (non-secret, persisted) merged over what the preset produced. */
+  env?: Record<string, string>;
+  /** Extra secret env (never persisted) merged over what the preset produced. */
+  secret_env?: Record<string, string>;
+  [presetField: string]: unknown;
+}
+
+export interface SessionView {
+  id: string; owner_id: string; status: Session["status"]; host_id: string | null; host_online: boolean | null;
+  queue_position: number | null; ended_reason: Session["ended_reason"]; ended_detail: string | null;
+  preset: string; image: string; cmd: string[] | null; env: Record<string, string>;
+  idle_timeout_s: number; created_at: number; started_at: number | null; ended_at: number | null;
+}
+
+export interface HostOnline { isOnline(hostId: string): boolean }
+
+export class SessionService {
+  constructor(
+    private cfg: Pick<CpConfig, "defaultImage" | "publicUrl" | "previewDomain">,
+    private store: Store, private hosts: HostOnline, private sched: Scheduler,
+    private tokens: Tokens, private presets: PresetRegistry,
+  ) {}
+
+  create(raw: unknown): SessionView {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw badRequest("body must be a JSON object");
+    const b = raw as CreateSessionBody;
+    if (!b.owner_id || typeof b.owner_id !== "string") throw badRequest("owner_id is required");
+    if (b.cmd !== undefined && (!Array.isArray(b.cmd) || b.cmd.length === 0 || !b.cmd.every((c) => typeof c === "string"))) {
+      throw badRequest("cmd must be a non-empty array of strings");
+    }
+    const id = newSessionId();
+    const preset = this.presets.resolve(b);
+    const expanded = preset.expand(id, b);
+    const idle = Number(b.idle_timeout_s ?? expanded.idle_timeout_s ?? DEFAULT_IDLE_S);
+    if (!Number.isFinite(idle) || idle < MIN_IDLE_S) throw badRequest(`idle_timeout_s must be >= ${MIN_IDLE_S}`);
+    // Caller-supplied values win over what the preset implied.
+    const env = { ...expanded.env, ...validateEnv("env", b.env) };
+    const secret_env = { ...expanded.secret_env, ...validateEnv("secret_env", b.secret_env) };
+    const row = this.store.insertSession({
+      id, owner_id: b.owner_id, preset: preset.name,
+      image: (typeof b.image === "string" && b.image.trim()) || expanded.image || this.cfg.defaultImage,
+      cmd: b.cmd ?? expanded.cmd ?? null, env, idle_timeout_s: idle, created_at: Date.now(),
+    });
+    this.sched.submit(row, secret_env);
+    return this.view(this.store.session(id)!);
+  }
+
+  list(owner_id?: string): SessionView[] { return this.store.listSessions(owner_id).map((s) => this.view(s)); }
+
+  get(sid: string, owner_id: string | null): SessionView { return this.view(this.owned(sid, owner_id)); }
+
+  cancel(sid: string, owner_id: string | null): SessionView {
+    const s = this.owned(sid, owner_id);
+    this.sched.cancel(s);
+    return this.view(this.store.session(s.id)!);
+  }
+
+  attachToken(sid: string, owner_id: string | null) {
+    const s = this.owned(sid, owner_id);
+    if (s.status !== "running") throw conflict(`session is ${s.status}`);
+    const token = this.tokens.sign({ k: "attach", sid: s.id }, ATTACH_TTL_MS);
+    const ws = this.cfg.publicUrl.replace(/^http/, "ws");
+    return { token, wss_url: `${ws}/attach?token=${token}`, expires_in_s: ATTACH_TTL_MS / 1000 };
+  }
+
+  previewToken(sid: string, owner_id: string | null, port: unknown) {
+    const s = this.owned(sid, owner_id);
+    const p = Number(port);
+    if (!Number.isInteger(p) || p < 1 || p > 65535) throw badRequest("port must be 1-65535");
+    const token = this.tokens.sign({ k: "preview", sid: s.id, port: p }, PREVIEW_TTL_MS);
+    const pub = new URL(this.cfg.publicUrl);
+    const portSuffix = pub.port ? `:${pub.port}` : "";
+    const url = `${pub.protocol}//${p}-${s.id}.${this.cfg.previewDomain}${portSuffix}/?t=${token}`;
+    return { token, url, expires_in_s: PREVIEW_TTL_MS / 1000 };
+  }
+
+  /** Ownership check. A session of another owner is indistinguishable from a missing one. */
+  private owned(sid: string, owner_id: string | null): Session {
+    if (!owner_id) throw badRequest("owner_id is required");
+    const s = this.store.session(sid);
+    if (!s || s.owner_id !== owner_id) throw notFound("session");
+    return s;
+  }
+
+  private view(s: Session): SessionView {
+    return {
+      id: s.id, owner_id: s.owner_id, status: s.status, host_id: s.host_id,
+      host_online: s.host_id ? this.hosts.isOnline(s.host_id) : null,
+      queue_position: s.status === "queued" ? this.sched.queuePosition(s.id) : null,
+      ended_reason: s.ended_reason, ended_detail: s.ended_detail,
+      preset: s.preset, image: s.image, cmd: s.cmd, env: s.env,
+      idle_timeout_s: s.idle_timeout_s, created_at: s.created_at, started_at: s.started_at, ended_at: s.ended_at,
+    };
+  }
+}
+
+/** Set by the daemon on every PTY; callers may not override them. */
+const RESERVED = new Set(["TERM", "DEVAGENTS_SESSION_ID"]);
+const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MAX_ENV_BYTES = 64 * 1024;
+
+export function validateEnv(name: string, env: unknown): Record<string, string> {
+  if (env === undefined || env === null) return {};
+  if (typeof env !== "object" || Array.isArray(env)) throw badRequest(`${name} must be an object of strings`);
+  let bytes = 0;
+  for (const [k, v] of Object.entries(env as Record<string, unknown>)) {
+    if (!KEY_RE.test(k)) throw badRequest(`${name}: invalid variable name "${k}"`);
+    if (RESERVED.has(k)) throw badRequest(`${name}: "${k}" is reserved`);
+    if (typeof v !== "string") throw badRequest(`${name}.${k} must be a string`);
+    bytes += k.length + v.length;
+  }
+  if (bytes > MAX_ENV_BYTES) throw badRequest(`${name} exceeds ${MAX_ENV_BYTES} bytes; ship large inputs through the repo or the image`);
+  return env as Record<string, string>;
+}

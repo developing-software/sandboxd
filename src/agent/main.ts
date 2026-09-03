@@ -15,12 +15,12 @@ for (const c of await driver.listManaged()) {
   await driver.destroy(c.id);
 }
 
-let tunnel: Tunnel;
-const sessions = new SessionManager(driver, cfg.entry, {
+const sessions = new SessionManager(driver, cfg.entry);
+const tunnel = new Tunnel(cfg, sessions, driver);
+sessions.on({
   started: (sid) => tunnel.send({ type: "session.started", sid }),
   ended: (sid, reason, detail) => { tunnel.closePtyStreams(sid); tunnel.send({ type: "session.ended", sid, reason, detail }); },
 });
-tunnel = new Tunnel(cfg, sessions, driver);
 
 log.info("starting", { name: cfg.name, cp: cfg.cpUrl, max_sessions: cfg.maxSessions, fingerprint: cfg.fingerprint.slice(0, 12) });
 tunnel.start();

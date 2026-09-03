@@ -2,7 +2,8 @@
 // browser sends {"type":"resize"} as text; we send {"type":"closed"} as text.
 import type { ServerWebSocket } from "bun";
 import type { AttachClientMsg, AttachServerMsg } from "../protocol/messages.ts";
-import type { HostHub, PtyHandle } from "./tunnel.ts";
+import type { PtyOpener } from "./hosts/hub.ts";
+import type { PtyHandle } from "./hosts/conn.ts";
 import type { Store } from "./store.ts";
 
 export interface AttachData {
@@ -17,7 +18,7 @@ type WS = ServerWebSocket<AttachData>;
 const closed = (reason: string) => JSON.stringify({ type: "closed", reason } satisfies AttachServerMsg);
 
 export class AttachBridge {
-  constructor(private store: Store, private hub: HostHub) {}
+  constructor(private store: Store, private hub: PtyOpener) {}
 
   onOpen(ws: WS) {
     const s = this.store.session(ws.data.sid);

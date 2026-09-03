@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { OP, WsFrameParser, decodeClose, encodeClose, encodeWsFrame, wsAccept } from "../src/cp/wsframe.ts";
+import { OP, WsFrameParser, decodeClose, encodeClose, encodeWsFrame, wsAccept } from "../src/cp/preview/wsframe.ts";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);

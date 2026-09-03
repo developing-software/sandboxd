@@ -15,19 +15,27 @@ export interface HostRow {
   last_seen_at: number | null; created_at: number;
 }
 
-export interface SessionRow {
+/** A session as the rest of the CP sees it: JSON columns already decoded. */
+export interface Session {
   id: string; owner_id: string; host_id: string | null; status: SessionStatus;
   ended_reason: EndReason | null; ended_detail: string | null;
   preset: string; image: string;
-  /** JSON string[] or null (= daemon default entry). */
-  cmd: string | null;
-  /** JSON object; non-secret env only. */
-  env: string;
+  /** null = the daemon's default entry. */
+  cmd: string[] | null;
+  /** Non-secret env only. Secrets never reach the store. */
+  env: Record<string, string>;
   idle_timeout_s: number;
   created_at: number; started_at: number | null; ended_at: number | null;
   /** Set on CP boot for sessions whose host hasn't re-reported them yet. */
   unknown_since: number | null;
 }
+
+export type NewSession = Pick<Session, "id" | "owner_id" | "preset" | "image" | "cmd" | "env" | "idle_timeout_s" | "created_at">;
+
+/** Raw row shape: `cmd` and `env` are JSON text in SQLite. */
+interface SessionRow extends Omit<Session, "cmd" | "env"> { cmd: string | null; env: string }
+
+const toSession = (r: SessionRow): Session => ({ ...r, cmd: r.cmd ? JSON.parse(r.cmd) : null, env: JSON.parse(r.env) });
 
 export class Store {
   readonly db: Database;
@@ -79,27 +87,32 @@ export class Store {
   }
 
   // ---- sessions ----
-  insertSession(s: Omit<SessionRow, "host_id" | "status" | "ended_reason" | "ended_detail" | "started_at" | "ended_at" | "unknown_since">): SessionRow {
+  private rows(sql: string, params: string[] = []): Session[] {
+    return this.db.query<SessionRow, string[]>(sql).all(...params).map(toSession);
+  }
+
+  insertSession(s: NewSession): Session {
     this.db.run(
       `INSERT INTO sessions (id,owner_id,status,preset,image,cmd,env,idle_timeout_s,created_at)
        VALUES (?,?,'queued',?,?,?,?,?,?)`,
-      [s.id, s.owner_id, s.preset, s.image, s.cmd, s.env, s.idle_timeout_s, s.created_at],
+      [s.id, s.owner_id, s.preset, s.image, s.cmd ? JSON.stringify(s.cmd) : null, JSON.stringify(s.env), s.idle_timeout_s, s.created_at],
     );
     return this.session(s.id)!;
   }
-  session(id: string): SessionRow | null { return this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id); }
-  listSessions(owner_id?: string): SessionRow[] {
+  session(id: string): Session | null {
+    const r = this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id);
+    return r ? toSession(r) : null;
+  }
+  listSessions(owner_id?: string): Session[] {
     return owner_id
-      ? this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE owner_id=? ORDER BY created_at DESC").all(owner_id)
-      : this.db.query<SessionRow, []>("SELECT * FROM sessions ORDER BY created_at DESC").all();
+      ? this.rows("SELECT * FROM sessions WHERE owner_id=? ORDER BY created_at DESC", [owner_id])
+      : this.rows("SELECT * FROM sessions ORDER BY created_at DESC");
   }
-  queuedSessions(): SessionRow[] { return this.db.query<SessionRow, []>("SELECT * FROM sessions WHERE status='queued' ORDER BY created_at").all(); }
-  activeSessionsOnHost(host_id: string): SessionRow[] {
-    return this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE host_id=? AND status IN ('creating','running')").all(host_id);
+  queuedSessions(): Session[] { return this.rows("SELECT * FROM sessions WHERE status='queued' ORDER BY created_at"); }
+  activeSessionsOnHost(host_id: string): Session[] {
+    return this.rows("SELECT * FROM sessions WHERE host_id=? AND status IN ('creating','running')", [host_id]);
   }
-  activeSessions(): SessionRow[] {
-    return this.db.query<SessionRow, []>("SELECT * FROM sessions WHERE status IN ('creating','running')").all();
-  }
+  activeSessions(): Session[] { return this.rows("SELECT * FROM sessions WHERE status IN ('creating','running')"); }
 
   markCreating(id: string, host_id: string) { this.db.run("UPDATE sessions SET status='creating', host_id=? WHERE id=?", [host_id, id]); }
   markRunning(id: string) { this.db.run("UPDATE sessions SET status='running', started_at=?, unknown_since=NULL WHERE id=?", [Date.now(), id]); }

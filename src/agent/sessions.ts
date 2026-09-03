@@ -1,5 +1,6 @@
+// Running sessions on this host: sandbox + PTY + ring buffer + idle timer.
 import type { EndReason, SessionSpec, Size } from "../protocol/messages.ts";
-import type { PtyStream, SandboxDriver } from "./docker.ts";
+import type { PtyStream, SandboxDriver } from "./driver.ts";
 import { PtyFanout } from "./pty.ts";
 import { logger } from "../shared/log.ts";
 
@@ -19,13 +20,20 @@ export interface SessionEvents {
   ended(sid: string, reason: EndReason, detail?: string): void;
 }
 
+const NO_EVENTS: SessionEvents = { started() {}, ended() {} };
+const INITIAL_SIZE: Size = { cols: 120, rows: 40 };
+
 export class SessionManager {
   private sessions = new Map<string, Running>();
   private timer: ReturnType<typeof setInterval>;
+  private events: SessionEvents = NO_EVENTS;
 
-  constructor(private driver: SandboxDriver, private entry: string[], private events: SessionEvents) {
+  constructor(private driver: SandboxDriver, private entry: string[]) {
     this.timer = setInterval(() => this.reapIdle(), 15_000);
   }
+
+  /** Subscribe after construction; the tunnel is built after the manager and needs it too. */
+  on(events: SessionEvents) { this.events = events; }
 
   running(): string[] { return [...this.sessions.keys()]; }
   count() { return this.sessions.size; }
@@ -37,7 +45,7 @@ export class SessionManager {
     try {
       containerId = await this.driver.create({ sid: spec.sid, image: spec.image });
       const env = { ...spec.env, ...spec.secret_env, TERM: "xterm-256color", DEVAGENTS_SESSION_ID: spec.sid };
-      const size = { cols: 120, rows: 40 };
+      const size = { ...INITIAL_SIZE };
       const pty = await this.driver.attach(containerId, spec.cmd ?? this.entry, env, size);
       const fanout = new PtyFanout();
       const run: Running = { spec, containerId, pty, fanout, size, ending: false };

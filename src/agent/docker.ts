@@ -2,38 +2,20 @@
 // PTY attach = `exec` with Tty:true, hijacked on a raw socket (fetch can't do upgrades).
 import type { Socket } from "bun";
 import type { Size } from "../protocol/messages.ts";
+import type { CreateOpts, Duplex, PtyStream, SandboxDriver } from "./driver.ts";
+import { concat, findCRLF2 } from "../shared/bytes.ts";
 
-export interface PtyStream {
-  write(data: Uint8Array | string): void;
-  resize(size: Size): Promise<void>;
-  close(): void;
-  onData(cb: (data: Uint8Array) => void): void;
-  onExit(cb: () => void): void;
-}
-
-export interface Duplex {
-  write(data: Uint8Array): void;
-  end(): void;
-  onData(cb: (data: Uint8Array) => void): void;
-  onClose(cb: () => void): void;
-}
-
-export interface CreateOpts { sid: string; image: string }
-
-export interface SandboxDriver {
-  create(opts: CreateOpts): Promise<string>;
-  attach(id: string, cmd: string[], env: Record<string, string>, size: Size): Promise<PtyStream>;
-  dial(id: string, port: number): Promise<Duplex>;
-  destroy(id: string): Promise<void>;
-  listManaged(): Promise<{ id: string; sid: string }[]>;
-}
+interface ContainerCreated { Id: string }
+interface ExecCreated { Id: string }
+interface ContainerInspect { NetworkSettings?: { IPAddress?: string; Networks?: Record<string, { IPAddress?: string }> } }
+interface ContainerSummary { Id: string; Labels?: Record<string, string> }
 
 export class DockerDriver implements SandboxDriver {
   /** `owner` scopes create/list/cleanup to this agent identity, so several agents
    *  sharing one Docker host never touch each other's sandboxes. */
   constructor(private sock = "/var/run/docker.sock", private owner = "unknown") {}
 
-  private async api(method: string, path: string, body?: unknown): Promise<any> {
+  private async api<T = unknown>(method: string, path: string, body?: unknown): Promise<T | null> {
     const r = await fetch(`http://docker${path}`, {
       unix: this.sock, method,
       headers: body ? { "content-type": "application/json" } : undefined,
@@ -42,7 +24,7 @@ export class DockerDriver implements SandboxDriver {
     if (r.status === 204) return null;
     const text = await r.text();
     if (!r.ok) throw new Error(`docker ${method} ${path} -> ${r.status}: ${text.trim()}`);
-    return text ? JSON.parse(text) : null;
+    return text ? (JSON.parse(text) as T) : null;
   }
 
   private async pull(image: string) {
@@ -59,24 +41,27 @@ export class DockerDriver implements SandboxDriver {
       // host.docker.internal lets a sandbox reach services on the host (e.g. a LiteLLM proxy on localhost).
       HostConfig: { Init: true, ExtraHosts: ["host.docker.internal:host-gateway"] },
     };
-    let res: any;
+    const createPath = `/containers/create?name=devagents-${sid}`;
+    let res: ContainerCreated | null;
     try {
-      res = await this.api("POST", `/containers/create?name=devagents-${sid}`, body);
+      res = await this.api<ContainerCreated>("POST", createPath, body);
     } catch (e) {
       if (!String(e).includes("-> 404")) throw e;
       await this.pull(image);
-      res = await this.api("POST", `/containers/create?name=devagents-${sid}`, body);
+      res = await this.api<ContainerCreated>("POST", createPath, body);
     }
+    if (!res) throw new Error("docker create returned no body");
     await this.api("POST", `/containers/${res.Id}/start`);
-    return res.Id as string;
+    return res.Id;
   }
 
   async attach(id: string, cmd: string[], env: Record<string, string>, size: Size): Promise<PtyStream> {
-    const exec = await this.api("POST", `/containers/${id}/exec`, {
+    const exec = await this.api<ExecCreated>("POST", `/containers/${id}/exec`, {
       AttachStdin: true, AttachStdout: true, AttachStderr: true, Tty: true,
       Cmd: cmd, Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
     });
-    const execId = exec.Id as string;
+    if (!exec) throw new Error("docker exec returned no body");
+    const execId = exec.Id;
 
     // Bytes (or an exit) can arrive before the caller registers its handlers, e.g. a
     // command that prints immediately. Buffer them instead of dropping them.
@@ -87,7 +72,7 @@ export class DockerDriver implements SandboxDriver {
     const emit = (d: Uint8Array) => { if (dataCb) dataCb(d); else early.push(d.slice()); };
     const exit = () => { exited = true; exitCb?.(); };
     let headerDone = false;
-    let pending = new Uint8Array(0);
+    let pending: Uint8Array = new Uint8Array(0);
     const opened = Promise.withResolvers<Socket<undefined>>();
 
     const socket = await Bun.connect({
@@ -103,9 +88,8 @@ export class DockerDriver implements SandboxDriver {
         data(s, incoming) {
           let chunk: Uint8Array = incoming;
           if (!headerDone) {
-            const merged = new Uint8Array(pending.length + chunk.length);
-            merged.set(pending); merged.set(chunk, pending.length); pending = merged;
-            const idx = indexOfCRLF2(pending);
+            pending = concat([pending, chunk]);
+            const idx = findCRLF2(pending);
             if (idx < 0) return;
             const head = new TextDecoder().decode(pending.subarray(0, idx));
             if (!/^HTTP\/1\.1 (101|200)/.test(head)) {
@@ -126,11 +110,12 @@ export class DockerDriver implements SandboxDriver {
       },
     });
     await opened.promise;
-    await this.api("POST", `/exec/${execId}/resize?h=${size.rows}&w=${size.cols}`).catch(() => {});
+    const resize = (sz: Size) => this.api("POST", `/exec/${execId}/resize?h=${sz.rows}&w=${sz.cols}`).catch(() => {});
+    await resize(size);
 
     return {
       write: (d) => { socket.write(d); },
-      resize: async (sz) => { await this.api("POST", `/exec/${execId}/resize?h=${sz.rows}&w=${sz.cols}`).catch(() => {}); },
+      resize: async (sz) => { await resize(sz); },
       close: () => socket.end(),
       onData: (cb) => { dataCb = cb; for (const d of early.splice(0)) cb(d); },
       onExit: (cb) => { exitCb = cb; if (exited) cb(); },
@@ -138,9 +123,9 @@ export class DockerDriver implements SandboxDriver {
   }
 
   async dial(id: string, port: number): Promise<Duplex> {
-    const info = await this.api("GET", `/containers/${id}/json`);
+    const info = await this.api<ContainerInspect>("GET", `/containers/${id}/json`);
     const nets = info?.NetworkSettings?.Networks ?? {};
-    const ip: string | undefined = Object.values<any>(nets)[0]?.IPAddress || info?.NetworkSettings?.IPAddress;
+    const ip = Object.values(nets)[0]?.IPAddress || info?.NetworkSettings?.IPAddress;
     if (!ip) throw new Error("container has no IP address");
 
     let dataCb: (d: Uint8Array) => void = () => {};
@@ -151,7 +136,7 @@ export class DockerDriver implements SandboxDriver {
         data(_, chunk) { dataCb(chunk); },
         close() { closeCb(); },
         error() { closeCb(); },
-        connectError(_, e) { closeCb(); },
+        connectError() { closeCb(); },
       },
     });
     return {
@@ -171,14 +156,7 @@ export class DockerDriver implements SandboxDriver {
 
   async listManaged(): Promise<{ id: string; sid: string }[]> {
     const filters = encodeURIComponent(JSON.stringify({ label: ["devagents.managed=1", `devagents.host=${this.owner}`] }));
-    const list: any[] = (await this.api("GET", `/containers/json?all=1&filters=${filters}`)) ?? [];
+    const list = (await this.api<ContainerSummary[]>("GET", `/containers/json?all=1&filters=${filters}`)) ?? [];
     return list.map((c) => ({ id: c.Id, sid: c.Labels?.["devagents.sid"] ?? "?" }));
   }
-}
-
-function indexOfCRLF2(buf: Uint8Array): number {
-  for (let i = 0; i + 3 < buf.length; i++) {
-    if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) return i;
-  }
-  return -1;
 }

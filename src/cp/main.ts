@@ -2,10 +2,13 @@ import type { ServerWebSocket } from "bun";
 import { loadConfig } from "./config.ts";
 import { Store } from "./store.ts";
 import { Tokens } from "./tokens.ts";
-import { HostHub, type TunnelData } from "./tunnel.ts";
+import { HostHub, type TunnelData } from "./hosts/hub.ts";
+import { HostService } from "./hosts/service.ts";
 import { Scheduler } from "./scheduler.ts";
 import { AttachBridge, type AttachData } from "./attach.ts";
-import { PreviewProxy, type PreviewWsData } from "./preview.ts";
+import { PreviewProxy, type PreviewWsData } from "./preview/proxy.ts";
+import { PresetRegistry, builtinPresets } from "./presets/index.ts";
+import { SessionService } from "./sessions.ts";
 import { Api } from "./http.ts";
 import { logger } from "../shared/log.ts";
 
@@ -13,23 +16,20 @@ const log = logger("devagents");
 // A stray rejection in a proxy or tunnel callback must never take the control plane down.
 process.on("unhandledRejection", (e) => log.error("unhandled rejection", { err: String(e) }));
 process.on("uncaughtException", (e) => log.error("uncaught exception", { err: String(e), stack: e?.stack }));
+
 const cfg = loadConfig();
 const store = new Store(cfg.dbPath);
 const tokens = new Tokens(cfg.secret);
+const presets = new PresetRegistry(builtinPresets());
 
-let sched: Scheduler;
-const hub = new HostHub(store, {
-  hostOnline: (id, running) => sched.onHostOnline(id, running),
-  heartbeat: () => sched.onHeartbeat(),
-  sessionStarted: (sid) => sched.onSessionStarted(sid),
-  sessionEnded: (sid, reason, detail) => sched.onSessionEnded(sid, reason, detail),
-});
-sched = new Scheduler(store, hub, cfg.sandboxEnv);
+const hub = new HostHub(store);
+const sched = new Scheduler(store, hub, cfg.sandboxEnv);
+hub.on(sched);
 sched.boot();
 
 const attach = new AttachBridge(store, hub);
 const preview = new PreviewProxy(store, hub, tokens, cfg.previewDomain);
-const api = new Api(cfg, store, hub, sched, tokens);
+const api = new Api(cfg, tokens, new HostService(store, hub), new SessionService(cfg, store, hub, sched, tokens, presets));
 
 type Data = TunnelData | AttachData | PreviewWsData;
 
@@ -68,4 +68,4 @@ const server = Bun.serve<Data>({
 });
 
 log.info("listening", { url: server.url.toString(), public: cfg.publicUrl, preview: `*.${cfg.previewDomain}`, dev: cfg.dev, db: cfg.dbPath });
-log.info("defaults", { image: cfg.defaultImage, sandbox_env: Object.keys(cfg.sandboxEnv), ...cfg.codingAgent });
+log.info("defaults", { image: cfg.defaultImage, sandbox_env: Object.keys(cfg.sandboxEnv), presets: presets.names });
