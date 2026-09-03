@@ -9,10 +9,10 @@
 set -u
 ws=/workspace
 if [ -n "${GIT_TOKEN:-}" ]; then
-  export GIT_ASKPASS=/usr/local/bin/devagents-git-askpass GIT_TERMINAL_PROMPT=0
+  export GIT_ASKPASS=/usr/local/bin/sandboxd-git-askpass GIT_TERMINAL_PROMPT=0
 fi
-git config --global user.name  "${GIT_AUTHOR_NAME:-devagents}"
-git config --global user.email "${GIT_AUTHOR_EMAIL:-devagents@localhost}"
+git config --global user.name  "${GIT_AUTHOR_NAME:-sandboxd}"
+git config --global user.email "${GIT_AUTHOR_EMAIL:-sandboxd@localhost}"
 if [ -n "${REPO:-}" ]; then
   ws="/workspace/$(basename "$REPO" .git)"
   if [ ! -d "$ws/.git" ] && ! git clone "$REPO" "$ws" 2>&1; then

@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "printWidth": 95,
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/*.html", "*.yaml", "*.yml"],
+  "overrides": [
+    {
+      "files": ["**/*.md"],
+      "options": { "embeddedLanguageFormatting": "off" }
+    }
+  ]
+}

@@ -13,7 +13,7 @@ root="${JUPYTER_ROOT:-$HOME}"
 if [ -n "${REPO:-}" ]; then
   root="$root/$(basename "$REPO" .git)"
   if [ -n "${GIT_TOKEN:-}" ]; then
-    export GIT_ASKPASS=/usr/local/bin/devagents-git-askpass GIT_TERMINAL_PROMPT=0
+    export GIT_ASKPASS=/usr/local/bin/sandboxd-git-askpass GIT_TERMINAL_PROMPT=0
   fi
   [ -d "$root/.git" ] || git clone --depth 1 "$REPO" "$root"
 fi

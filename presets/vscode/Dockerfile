@@ -11,8 +11,8 @@ RUN curl -fsSL https://code-server.dev/install.sh | sh \
     && rm -rf /var/lib/apt/lists/* /root/.cache
 
 RUN useradd -m -s /bin/bash dev && mkdir -p /workspace && chown dev:dev /workspace
-COPY --chmod=755 entry.sh /usr/local/bin/devagents-entry
-COPY --chmod=755 git-askpass.sh /usr/local/bin/devagents-git-askpass
+COPY --chmod=755 entry.sh /usr/local/bin/sandboxd-entry
+COPY --chmod=755 git-askpass.sh /usr/local/bin/sandboxd-git-askpass
 
 USER dev
 WORKDIR /workspace

@@ -13,10 +13,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
 
 RUN useradd -m -s /bin/bash dev && mkdir -p /workspace && chown dev:dev /workspace
-COPY entry.sh /usr/local/bin/devagents-entry
-COPY git-askpass.sh /usr/local/bin/devagents-git-askpass
-COPY agent-setup.sh /usr/local/bin/devagents-agent-setup
-RUN chmod +x /usr/local/bin/devagents-entry /usr/local/bin/devagents-git-askpass /usr/local/bin/devagents-agent-setup
+COPY entry.sh /usr/local/bin/sandboxd-entry
+COPY git-askpass.sh /usr/local/bin/sandboxd-git-askpass
+COPY agent-setup.sh /usr/local/bin/sandboxd-agent-setup
+RUN chmod +x /usr/local/bin/sandboxd-entry /usr/local/bin/sandboxd-git-askpass /usr/local/bin/sandboxd-agent-setup
 
 USER dev
 WORKDIR /workspace

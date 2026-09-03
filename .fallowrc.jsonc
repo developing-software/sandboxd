@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/fallow/schema.json",
+  "workspaces": {
+    "patterns": ["apps/*", "packages/*"],
+  },
+  "entry": [
+    // One process per app. Nothing imports these — `bun run` names them.
+    "apps/*/src/main.ts",
+    // `bun run image`, from the repo root.
+    "presets/build.ts",
+    "**/*.test.ts",
+  ],
+  "boundaries": {
+    // The control plane and the worker are siblings that only meet on the wire: the
+    // messages and framing in core are the whole contract. core is the leaf both share
+    // and reaches nothing.
+    "zones": [
+      { "name": "cp", "patterns": ["apps/cp/src/**"] },
+      { "name": "worker", "patterns": ["apps/worker/src/**"] },
+      { "name": "core", "root": "packages/core/", "patterns": ["src/**"] },
+    ],
+    "rules": [
+      { "from": "cp", "allow": ["core"] },
+      { "from": "worker", "allow": ["core"] },
+      { "from": "core", "allow": [] },
+    ],
+  },
+}

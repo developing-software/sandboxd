@@ -1,15 +1,15 @@
 # coding-agent: fresh clone on its own branch, then claude | codex | opencode | shell in the PTY.
 # Fields map 1:1 onto env consumed by entry.sh in this folder. Defaults for AGENT / MODEL / BRANCH
-# live in entry.sh so an operator can override them with DEVAGENTS_SANDBOX_ENV_<NAME>.
+# live in entry.sh so an operator can override them with SANDBOXD_SANDBOX_ENV_<NAME>.
 description: clone a repo and run claude, codex, opencode or a shell in it
 claims_when: { present: repo }
 fields:
   repo:        { type: string, required: true, env: REPO, description: "https clone url" }
   prompt:      { type: string, env: PROMPT, multiline: true, description: "empty = shell only" }
   agent:       { type: enum, values: [claude, codex, opencode, shell], env: AGENT, description: "default claude; shell when prompt is empty" }
-  model:       { type: string, env: MODEL, description: "default claude-sonnet-4-6 (or DEVAGENTS_SANDBOX_ENV_MODEL)" }
+  model:       { type: string, env: MODEL, description: "default claude-sonnet-4-6 (or SANDBOXD_SANDBOX_ENV_MODEL)" }
   setup:       { type: string, env: SETUP, description: "shell command run in the clone before the agent, e.g. bun install" }
-  branch:      { type: string, env: BRANCH, description: "default devagents/<session id>" }
+  branch:      { type: string, env: BRANCH, description: "default sandboxd/<session id>" }
   base_branch: { type: string, env: BASE_BRANCH, description: "branch to clone; default = the repo default" }
   llm.base_url: { type: url, env: LLM_BASE_URL, description: "OpenAI/Anthropic-compatible gateway root (no /v1)" }
   llm.api_key:  { type: string, secret: true, env: LLM_API_KEY }

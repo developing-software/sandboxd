@@ -34,5 +34,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 .direnv
 
-# local dev state (sqlite db, agent identity)
+# local dev state (sqlite db, worker identity)
 .data
+
+# tool caches and CI reports
+.fallow
+junit.xml

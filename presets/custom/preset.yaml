@@ -1,4 +1,4 @@
 # custom: nothing implied. The caller supplies image / cmd / env and owns the contract with the image.
-# `image: null` means no preset image: the control plane's DEVAGENTS_DEFAULT_IMAGE applies when the caller sends none.
+# `image: null` means no preset image: the control plane's SANDBOXD_DEFAULT_IMAGE applies when the caller sends none.
 description: any image + command + env; nothing implied
 image: null
