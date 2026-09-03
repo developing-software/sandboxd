@@ -27,6 +27,12 @@ export function createApp(d: AppDeps) {
   const call = d.fetch ?? fetch
   const authorization = `Bearer ${d.cfg.serviceToken}`
   const api = hc<Routes>(d.cfg.apiUrl, { headers: { authorization }, fetch: call })
+  // A rejected fetch is transport: the API is down or restarting (bun --hot does that on
+  // every save). Name it, so the page says so instead of "internal error".
+  const down = (e: unknown) => {
+    log.warn('api unreachable', { url: d.cfg.apiUrl, err: String(e) })
+    return new HttpError(502, `api unreachable at ${d.cfg.apiUrl}`)
+  }
 
   return new Hono({ strict: false })
     .get('/', async (c) => c.html(await d.html()))
@@ -36,11 +42,12 @@ export function createApp(d: AppDeps) {
       const raw: unknown = await c.req.json().catch(() => {
         throw badRequest('invalid JSON body')
       })
-      const res = await api.sessions.$post({
-        json: buildCreate(
-          { defaultImage: d.cfg.defaultImage, presets: d.presets, catalog: d.catalog },
-          raw,
-        ),
+      const json = buildCreate(
+        { defaultImage: d.cfg.defaultImage, presets: d.presets, catalog: d.catalog },
+        raw,
+      )
+      const res = await api.sessions.$post({ json }).catch((e) => {
+        throw down(e)
       })
       return relay(res)
     })
@@ -52,7 +59,10 @@ export function createApp(d: AppDeps) {
       const raw =
         c.req.method === 'GET' || c.req.method === 'HEAD' ? null : await c.req.arrayBuffer()
       const body = raw && raw.byteLength > 0 ? raw : undefined
-      return relay(await call(url, { method: c.req.method, headers, body }))
+      const res = await call(url, { method: c.req.method, headers, body }).catch((e) => {
+        throw down(e)
+      })
+      return relay(res)
     })
     .onError((err, c) => {
       if (err instanceof HttpError)

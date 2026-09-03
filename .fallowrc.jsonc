@@ -8,6 +8,7 @@
     "apps/*/src/main.ts",
     // `bun run image`, from the repo root.
     "apps/ui/presets/build.ts",
+    "scripts/*.ts",
     "**/*.test.ts",
   ],
   // The route types are what hono/client consumes in apps/ui; the schema's input type is

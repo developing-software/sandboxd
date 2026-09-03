@@ -7,6 +7,7 @@
   ],
   "type": "module",
   "scripts": {
+    "dev": "bun run scripts/dev.ts",
     "api": "bun run apps/api/src/main.ts",
     "ui": "bun run apps/ui/src/main.ts",
     "worker": "bun run apps/worker/src/main.ts",
@@ -20,10 +21,12 @@
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "fallow": "bunx fallow health --hotspots --top 3 && bunx fallow dead-code && bunx fallow dupes"
+    "fallow": "bunx fallow health --hotspots --top 3 && bunx fallow dead-code && bunx fallow dupes",
+    "postinstall": "bun2nix -o nix/bun.nix"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "bun2nix": "^2.1.2",
     "fallow": "^3.22.0",
     "oxfmt": "^0.66.0",
     "oxlint": "^1.81.0"

@@ -86,3 +86,24 @@ test('everything else is forwarded to the API with the token added', async () =>
     ['POST', 'http://api.test/hosts/h1/revoke', 'Bearer secret', null],
   ])
 })
+
+test('an unreachable API is a 502 that names it, not an internal error', async () => {
+  const app = createApp({
+    cfg: { apiUrl: 'http://api.test', serviceToken: 'secret', defaultImage: null },
+    presets: new PresetRegistry(loaded.presets),
+    catalog: loaded.catalog,
+    html: async () => '',
+    fetch: (async () => {
+      throw new Error('Unable to connect. Is the computer able to access the url?')
+    }) as unknown as typeof globalThis.fetch,
+  })
+  const list = await app.request('/sessions?owner_id=me')
+  expect(list.status).toBe(502)
+  expect(await list.json()).toEqual({ error: 'api unreachable at http://api.test' })
+  const create = await app.request('/sessions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ owner_id: 'me', image: 'i' }),
+  })
+  expect(create.status).toBe(502)
+})
