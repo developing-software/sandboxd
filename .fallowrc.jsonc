@@ -7,20 +7,31 @@
     // One process per app. Nothing imports these — `bun run` names them.
     "apps/*/src/main.ts",
     // `bun run image`, from the repo root.
-    "presets/build.ts",
+    "apps/ui/presets/build.ts",
     "**/*.test.ts",
   ],
+  // The route types are what hono/client consumes in apps/ui; the schema's input type is
+  // what it sends. Neither has a runtime consumer inside the API by design.
+  "ignoreExports": [
+    { "file": "apps/api/src/http/routes.ts", "exports": ["Routes"] },
+    { "file": "apps/api/src/schema.ts", "exports": ["CreateSessionInput"] },
+  ],
+  // A peer dependency of hono-openapi (its validator is re-exported through
+  // apps/api/src/http/common.ts), so it is required at install time with no direct import.
+  "ignoreDependencies": ["@hono/standard-validator"],
   "boundaries": {
     // The control plane and the worker are siblings that only meet on the wire: the
-    // messages and framing in core are the whole contract. core is the leaf both share
-    // and reaches nothing.
+    // messages and framing in core are the whole contract. core is the leaf both share.
+    // The UI sits in front of the API and may read its types; the API never reaches back.
     "zones": [
-      { "name": "cp", "patterns": ["apps/cp/src/**"] },
+      { "name": "api", "patterns": ["apps/api/src/**"] },
+      { "name": "ui", "patterns": ["apps/ui/src/**", "apps/ui/presets/build.ts"] },
       { "name": "worker", "patterns": ["apps/worker/src/**"] },
       { "name": "core", "root": "packages/core/", "patterns": ["src/**"] },
     ],
     "rules": [
-      { "from": "cp", "allow": ["core"] },
+      { "from": "api", "allow": ["core"] },
+      { "from": "ui", "allow": ["core", "api"] },
       { "from": "worker", "allow": ["core"] },
       { "from": "core", "allow": [] },
     ],
