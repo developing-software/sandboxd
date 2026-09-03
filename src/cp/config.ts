@@ -10,6 +10,8 @@ export interface CpConfig {
   sandboxEnv: Record<string, string>;
   /** Defaults for the built-in `coding-agent` preset. */
   codingAgent: { defaultAgent: string; defaultModel: string | null; codexModel: string | null };
+  /** Defaults for the built-in `jupyter` preset. */
+  jupyter: { image: string; idleTimeoutS: number };
   dbPath: string;
   dev: boolean;
 }
@@ -48,6 +50,10 @@ export function loadConfig(env = process.env): CpConfig {
       defaultModel: env.DEVAGENTS_DEFAULT_MODEL || "claude-sonnet-4-6",
       // Codex only speaks the Responses API; through LiteLLM that path is OpenAI-models-only in practice.
       codexModel: env.DEVAGENTS_CODEX_MODEL || null,
+    },
+    jupyter: {
+      image: env.DEVAGENTS_JUPYTER_IMAGE || "quay.io/jupyter/minimal-notebook:latest",
+      idleTimeoutS: Number(env.DEVAGENTS_JUPYTER_IDLE_S || 4 * 3600),
     },
     dbPath: env.DEVAGENTS_DB ?? "cp.db",
     dev: env.DEVAGENTS_DEV === "true" || env.DEVAGENTS_DEV === "1",

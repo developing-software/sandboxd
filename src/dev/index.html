@@ -61,6 +61,7 @@
   <label>preset</label>
   <select id="preset">
     <option value="coding-agent">coding-agent — clone a repo, run an agent</option>
+    <option value="jupyter">jupyter — notebook server behind the preview</option>
     <option value="custom">custom — image + command + env</option>
   </select>
 
@@ -86,6 +87,21 @@
     <input id="llmKey" type="password" placeholder="default from control plane">
     <label>git token</label>
     <input id="gitToken" type="password" placeholder="optional, for private repos / push">
+  </div>
+
+  <div id="presetJupyter" class="hidden">
+    <label>repository <span class="muted">(optional, cloned into the notebook root)</span></label>
+    <input id="jRepo" placeholder="https://github.com/org/notebooks.git">
+    <div class="row">
+      <div><label>ui</label>
+        <select id="jUi">
+          <option value="lab">lab</option>
+          <option value="notebook">notebook</option>
+        </select></div>
+      <div><label>port</label><input id="jPort" value="8888"></div>
+    </div>
+    <label>git token</label>
+    <input id="jGitToken" type="password" placeholder="optional, for private repos">
   </div>
 
   <div id="presetCustom" class="hidden">
@@ -249,6 +265,7 @@ window.attach = attach;
 function describe(s) {
   const e = s.env || {};
   if (s.preset === "coding-agent") return `${e.AGENT}${e.MODEL ? " / " + e.MODEL : ""} · ${e.REPO} → ${e.BRANCH}`;
+  if (s.preset === "jupyter") return `jupyter ${e.JUPYTER_UI} :${e.JUPYTER_PORT}${e.REPO ? " · " + e.REPO : ""} · ${s.image}`;
   return `${s.preset} · ${s.cmd ? s.cmd.join(" ") : "default entry"} · ${s.image}`;
 }
 function parseEnv(text) {
@@ -265,9 +282,10 @@ function parseCmd(text) {
   return t.startsWith("[") ? JSON.parse(t) : t.split(/\s+/);
 }
 $("preset").addEventListener("change", () => {
-  const coding = $("preset").value === "coding-agent";
-  $("presetCoding").classList.toggle("hidden", !coding);
-  $("presetCustom").classList.toggle("hidden", coding);
+  const p = $("preset").value;
+  $("presetCoding").classList.toggle("hidden", p !== "coding-agent");
+  $("presetJupyter").classList.toggle("hidden", p !== "jupyter");
+  $("presetCustom").classList.toggle("hidden", p !== "custom");
 });
 
 async function refresh() {
@@ -296,6 +314,15 @@ $("create").onclick = async () => {
       llm: { base_url: $("llmBase").value.trim() || undefined, api_key: $("llmKey").value || undefined },
       secrets: { git_token: $("gitToken").value || undefined },
     });
+    else if (preset === "jupyter") {
+      Object.assign(body, {
+        repo: $("jRepo").value.trim() || undefined,
+        ui: $("jUi").value,
+        port: Number($("jPort").value) || 8888,
+        secrets: { git_token: $("jGitToken").value || undefined },
+      });
+      $("port").value = String(body.port);
+    }
     else body.cmd = parseCmd($("cmd").value);
     const s = await api("POST", "/sessions", body);
     note(`created ${s.id} (${s.status})`);

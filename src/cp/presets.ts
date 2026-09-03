@@ -6,6 +6,15 @@ import { badRequest } from "../shared/errors.ts";
 export const AGENT_KINDS = ["claude", "codex", "opencode", "shell"] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
+export interface JupyterFields {
+  /** Optional repo to clone into the notebook root (public, or with secrets.git_token). */
+  repo?: string;
+  /** Which UI to serve. Default lab. */
+  ui?: JupyterUi;
+  /** Port Jupyter listens on inside the sandbox; preview it with this port. Default 8888. */
+  port?: number;
+}
+
 export interface CodingAgentFields {
   repo?: string; prompt?: string; base_branch?: string; branch?: string;
   agent?: AgentKind; model?: string;
@@ -14,9 +23,39 @@ export interface CodingAgentFields {
   secrets?: { git_token?: string; anthropic_api_key?: string };
 }
 
-export interface Expanded { env: Record<string, string>; secret_env: Record<string, string> }
+/** What a preset implies. image/cmd/idle_timeout_s are defaults the caller may override. */
+export interface Expanded {
+  env: Record<string, string>; secret_env: Record<string, string>;
+  image?: string; cmd?: string[]; idle_timeout_s?: number;
+}
 
-export type Preset = (sid: string, body: CodingAgentFields, cfg: CpConfig) => Expanded;
+export type PresetBody = CodingAgentFields & JupyterFields;
+export type Preset = (sid: string, body: PresetBody, cfg: CpConfig) => Expanded;
+
+export const JUPYTER_UIS = ["lab", "notebook"] as const;
+export type JupyterUi = (typeof JUPYTER_UIS)[number];
+
+/** Runs in the PTY via `bash -lc`. Clones REPO into the notebook root when set,
+ *  then execs Jupyter bound on all interfaces so the daemon can dial it from
+ *  the bridge network. Auth is off inside the container: the preview cookie
+ *  is the gate, and the token would have nowhere to go in the redirect flow.
+ *  allow_origin=* because the proxy rewrites Host to localhost while the
+ *  browser's Origin is the preview subdomain. */
+const JUPYTER_ENTRY = [
+  'set -e',
+  'root="${JUPYTER_ROOT:-$PWD}"',
+  'if [ -n "$REPO" ]; then',
+  '  root="$root/$(basename "$REPO" .git)"',
+  '  if [ -n "$GIT_TOKEN" ]; then',
+  "    printf '#!/bin/sh\\nexec printf %%s \"$GIT_TOKEN\"\\n' > /tmp/askpass && chmod +x /tmp/askpass",
+  '    export GIT_ASKPASS=/tmp/askpass GIT_TERMINAL_PROMPT=0',
+  '  fi',
+  '  [ -d "$root/.git" ] || git clone --depth 1 "$REPO" "$root"',
+  'fi',
+  'exec jupyter "$JUPYTER_UI" --ip=0.0.0.0 --port="$JUPYTER_PORT" --no-browser',
+  '  --ServerApp.root_dir="$root" --IdentityProvider.token= --ServerApp.password=',
+  "  --ServerApp.allow_remote_access=True --ServerApp.allow_origin='*' --ServerApp.trust_xheaders=True",
+].join("\n").replace(/\n  --/g, " --");
 
 export const PRESETS: Record<string, Preset> = {
   /** Fresh clone on its own branch, then one of claude|codex|opencode|shell in the PTY.
@@ -41,6 +80,20 @@ export const PRESETS: Record<string, Preset> = {
     if (b.secrets?.anthropic_api_key) secret_env.ANTHROPIC_API_KEY = b.secrets.anthropic_api_key;
     if (b.llm?.api_key) secret_env.LLM_API_KEY = b.llm.api_key;
     return { env, secret_env };
+  },
+  /** JupyterLab (or classic Notebook) on a stock jupyter/docker-stacks image, previewed on `port`.
+   *  Notebook traffic goes through the preview proxy (HTTP + kernel WebSockets). Idle defaults to
+   *  4 h because preview traffic does not count as activity (design decision 10). */
+  jupyter(_sid, b, cfg) {
+    const ui = (b.ui ?? "lab") as JupyterUi;
+    if (!JUPYTER_UIS.includes(ui)) throw badRequest(`ui must be one of ${JUPYTER_UIS.join(", ")}`);
+    const port = b.port ?? 8888;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw badRequest("port must be an integer in 1..65535");
+    if (b.repo !== undefined && (typeof b.repo !== "string" || !b.repo.trim())) throw badRequest("repo must be a non-empty string");
+    const env: Record<string, string> = { JUPYTER_UI: ui, JUPYTER_PORT: String(port), REPO: b.repo?.trim() ?? "" };
+    const secret_env: Record<string, string> = {};
+    if (b.secrets?.git_token) secret_env.GIT_TOKEN = b.secrets.git_token;
+    return { env, secret_env, image: cfg.jupyter.image, cmd: ["bash", "-lc", JUPYTER_ENTRY], idle_timeout_s: cfg.jupyter.idleTimeoutS };
   },
   /** Nothing implied. The caller supplies image/cmd/env and owns the contract with the image. */
   custom() { return { env: {}, secret_env: {} }; },

@@ -1,12 +1,24 @@
 // Preview proxy: https://<port>-<sid>.<previewDomain>/... -> tunnel stream ->
 // daemon -> container:port. HTTP/1.1 only, Connection: close per request.
-// WebSocket upgrades (HMR) are not supported in v1.
-import type { HostHub } from "./tunnel.ts";
+// WebSocket upgrades are bridged: the browser side is a Bun server WebSocket,
+// the sandbox side is a raw HTTP/1.1 upgrade over a tunnel stream; frames are
+// re-encoded in between (no extensions are negotiated upstream).
+import type { ServerWebSocket } from "bun";
+import type { HostHub, PortHandle } from "./tunnel.ts";
 import type { Store } from "./store.ts";
 import { Tokens } from "./tokens.ts";
+import { OP, WsFrameParser, decodeClose, encodeClose, encodeWsFrame, wsAccept, wsKey } from "./wsframe.ts";
+import { logger } from "../shared/log.ts";
+
+const log = logger("preview");
 
 export const COOKIE = "devagents_preview";
 const COOKIE_TTL_MS = 12 * 60 * 60 * 1000;
+export const MAX_WS_MESSAGE = 16 * 1024 * 1024;
+
+type Upstream = PortHandle;
+export type Dial = (sub: { onData(d: Uint8Array): void; onClose(): void }) => Promise<Upstream>;
+export type PreviewUpgrader = { upgrade(req: Request, opts: { data: PreviewWsData; headers?: Record<string, string> }): boolean };
 
 export class PreviewProxy {
   private hostRe: RegExp;
@@ -21,7 +33,8 @@ export class PreviewProxy {
     return m ? { port: Number(m[1]), sid: m[2]!.toLowerCase() } : null;
   }
 
-  async handle(req: Request, { port, sid }: { port: number; sid: string }): Promise<Response> {
+  /** Returns undefined when the request was upgraded to a WebSocket. */
+  async handle(req: Request, { port, sid }: { port: number; sid: string }, server: PreviewUpgrader): Promise<Response | undefined> {
     const url = new URL(req.url);
     const secure = url.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
 
@@ -45,15 +58,13 @@ export class PreviewProxy {
     const c = this.tokens.verify(cookies[COOKIE], "preview-cookie");
     if (!c || c.sid !== sid || c.port !== port) return new Response("preview requires a token: open the link from the app", { status: 401 });
 
-    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-      return new Response("websocket preview is not supported in v1", { status: 501 });
-    }
-
     const s = this.store.session(sid);
     if (!s || s.status !== "running" || !s.host_id) return new Response("session is not running", { status: 502 });
     if (!this.hub.isOnline(s.host_id)) return new Response("host is offline", { status: 502 });
+    const dial: Dial = (sub) => this.hub.dialPort(s.host_id!, sid, port, sub);
 
-    return proxyOnce(req, port, (sub) => this.hub.dialPort(s.host_id!, sid, port, sub));
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") return proxyWebSocket(req, port, dial, server);
+    return proxyOnce(req, port, dial);
   }
 }
 
@@ -66,16 +77,13 @@ function parseCookies(h: string | null): Record<string, string> {
   return out;
 }
 
-const HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer"]);
+const HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer",
+  "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions", "sec-websocket-accept"]);
 
-export async function proxyOnce(
-  req: Request, port: number,
-  dial: (sub: { onData(d: Uint8Array): void; onClose(): void }) => Promise<{ write(d: Uint8Array): void; close(): void }>,
-): Promise<Response> {
+/** Request head for the upstream: our cookie stripped, the original host forwarded. */
+function requestHead(req: Request, port: number, extra: string[]): Uint8Array {
   const url = new URL(req.url);
-  const body = req.body ? new Uint8Array(await req.arrayBuffer()) : null;
-
-  const lines = [`${req.method} ${url.pathname}${url.search} HTTP/1.1`, `host: localhost:${port}`, "connection: close"];
+  const lines = [`${req.method} ${url.pathname}${url.search} HTTP/1.1`, `host: localhost:${port}`, ...extra];
   for (const [k, v] of req.headers) {
     if (HOP.has(k) || k === "host" || k === "content-length") continue;
     if (k === "cookie") {
@@ -85,51 +93,195 @@ export async function proxyOnce(
     }
     lines.push(`${k}: ${v}`);
   }
-  if (body) lines.push(`content-length: ${body.length}`);
-  const head = new TextEncoder().encode(lines.join("\r\n") + "\r\n\r\n");
+  const host = req.headers.get("host");
+  if (host && !req.headers.has("x-forwarded-host")) lines.push(`x-forwarded-host: ${host}`);
+  if (!req.headers.has("x-forwarded-proto")) lines.push(`x-forwarded-proto: ${url.protocol.replace(":", "")}`);
+  return new TextEncoder().encode(lines.join("\r\n") + "\r\n\r\n");
+}
 
+/** Dial, write the head, resolve once the response head is parsed. Everything
+ *  after the head is parsed as body and handed to `onBody` / `onEnd`. For a 101
+ *  the parser is in until-close mode, so "body" is simply the raw socket bytes. */
+async function sendHead(
+  head: Uint8Array, dial: Dial,
+  onBody: (d: Uint8Array) => void, onEnd: () => void, onClose: () => void,
+): Promise<{ conn: Upstream; status: number; headers: Headers }> {
   const parser = new ResponseParser();
-  const headers = Promise.withResolvers<{ status: number; headers: Headers }>();
+  const headP = Promise.withResolvers<{ status: number; headers: Headers }>();
   // A failed dial rejects `dial()` *and* fires onClose, which rejects this promise
   // after we have already returned 502. Mark it handled or the process dies.
-  headers.promise.catch(() => {});
+  headP.promise.catch(() => {});
+  const conn = await dial({
+    onData: (d) => {
+      for (const ev of parser.feed(d)) {
+        if (ev.kind === "head") headP.resolve({ status: ev.status, headers: ev.headers });
+        else if (ev.kind === "body") onBody(ev.data);
+        else onEnd();
+      }
+    },
+    onClose: () => {
+      if (!parser.headDone) headP.reject(new Error("upstream closed before response headers"));
+      onClose();
+    },
+  });
+  conn.write(head);
+  const { status, headers } = await headP.promise;
+  return { conn, status, headers };
+}
+
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a); out.set(b, a.length);
+  return out;
+}
+
+function passHeaders(h: Headers): Headers {
+  const out = new Headers();
+  for (const [k, v] of h) if (!HOP.has(k) && k !== "content-length") out.append(k, v);
+  return out;
+}
+
+export async function proxyOnce(req: Request, port: number, dial: Dial): Promise<Response> {
+  const body = req.body ? new Uint8Array(await req.arrayBuffer()) : null;
+  const head = requestHead(req, port, ["connection: close", ...(body ? [`content-length: ${body.length}`] : [])]);
+  const out = body ? concat(head, body) : head;
+
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   let finished = false;
   const finish = () => { if (finished) return; finished = true; try { controller?.close(); } catch {} };
-
+  let conn: Upstream | null = null;
   const stream = new ReadableStream<Uint8Array>({ start(c) { controller = c; }, cancel() { conn?.close(); } });
-  let conn: { write(d: Uint8Array): void; close(): void } | null = null;
 
+  let res: Awaited<ReturnType<typeof sendHead>>;
   try {
-    conn = await dial({
-      onData: (d) => {
-        for (const ev of parser.feed(d)) {
-          if (ev.kind === "head") headers.resolve({ status: ev.status, headers: ev.headers });
-          else if (ev.kind === "body") { try { controller?.enqueue(ev.data); } catch {} }
-          else finish();
+    res = await sendHead(out, dial, (d) => { try { controller?.enqueue(d); } catch {} }, finish, finish);
+  } catch (e) {
+    const msg = String(e);
+    if (msg.includes("upstream closed before response headers")) return new Response(`bad upstream response: ${msg}`, { status: 502 });
+    return new Response(`could not reach port ${port} in the sandbox: ${msg}`, { status: 502 });
+  }
+  conn = res.conn;
+  const headers = passHeaders(res.headers);
+  if (res.status === 204 || res.status === 304) { finish(); conn.close(); return new Response(null, { status: res.status, headers }); }
+  return new Response(stream, { status: res.status, headers });
+}
+
+// ---- WebSocket bridge ------------------------------------------------------
+
+export interface PreviewWsData { kind: "preview"; bridge: PreviewBridge }
+type WS = ServerWebSocket<PreviewWsData>;
+
+/** One bridged connection. Upstream bytes may arrive before Bun fires `open`,
+ *  so they are queued until the browser socket is attached. */
+export class PreviewBridge {
+  private ws: WS | null = null;
+  private pending: (() => void)[] = [];
+  private frames = new WsFrameParser(MAX_WS_MESSAGE);
+  private upstreamClosed = false;
+
+  constructor(private conn: Upstream) {}
+
+  /** Bytes from the sandbox after the 101. */
+  onUpstreamData(d: Uint8Array) {
+    let msgs;
+    try { msgs = this.frames.feed(d); } catch (e) { this.fail(1002, String(e)); return; }
+    for (const m of msgs) this.run(() => this.deliver(m));
+  }
+
+  onUpstreamClose() {
+    if (this.upstreamClosed) return;
+    this.upstreamClosed = true;
+    this.run(() => { try { this.ws?.close(1001, "upstream closed"); } catch {} });
+  }
+
+  attach(ws: WS) {
+    this.ws = ws;
+    for (const f of this.pending) f();
+    this.pending = [];
+  }
+
+  onBrowserMessage(msg: string | Buffer) {
+    if (this.upstreamClosed) return;
+    const payload = typeof msg === "string" ? new TextEncoder().encode(msg) : new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
+    this.conn.write(encodeWsFrame(typeof msg === "string" ? OP.TEXT : OP.BINARY, payload, true));
+  }
+
+  onBrowserClose(code: number, reason: string) {
+    if (this.upstreamClosed) return;
+    this.upstreamClosed = true;
+    try { this.conn.write(encodeWsFrame(OP.CLOSE, encodeClose(validCloseCode(code) ? code : 1000, reason), true)); } catch {}
+    this.conn.close();
+  }
+
+  private run(f: () => void) { this.ws ? f() : this.pending.push(f); }
+
+  private deliver(m: { opcode: number; data: Uint8Array }) {
+    const ws = this.ws!;
+    switch (m.opcode) {
+      case OP.TEXT: ws.send(new TextDecoder().decode(m.data)); break;
+      case OP.BINARY: ws.send(m.data); break;
+      case OP.PING: if (!this.upstreamClosed) this.conn.write(encodeWsFrame(OP.PONG, m.data, true)); break;
+      case OP.PONG: break;
+      case OP.CLOSE: {
+        const { code, reason } = decodeClose(m.data);
+        if (!this.upstreamClosed) {
+          this.upstreamClosed = true;
+          try { this.conn.write(encodeWsFrame(OP.CLOSE, m.data, true)); } catch {}
+          this.conn.close();
         }
-      },
-      onClose: () => {
-        if (!parser.headDone) headers.reject(new Error("upstream closed before response headers"));
-        finish();
-      },
-    });
+        try { ws.close(validCloseCode(code) ? code : 1000, reason); } catch {}
+        break;
+      }
+    }
+  }
+
+  private fail(code: number, reason: string) {
+    log.warn("websocket bridge error", { reason });
+    if (!this.upstreamClosed) { this.upstreamClosed = true; this.conn.close(); }
+    this.run(() => { try { this.ws?.close(code, reason.slice(0, 120)); } catch {} });
+  }
+}
+
+function validCloseCode(c: number) { return (c >= 1000 && c <= 1003) || (c >= 1007 && c <= 1014) || (c >= 3000 && c <= 4999); }
+
+async function proxyWebSocket(req: Request, port: number, dial: Dial, server: PreviewUpgrader): Promise<Response | undefined> {
+  const key = wsKey();
+  const head = requestHead(req, port, [
+    "connection: Upgrade", "upgrade: websocket", `sec-websocket-key: ${key}`, "sec-websocket-version: 13",
+  ]);
+
+  let bridge: PreviewBridge | null = null;
+  const early: Uint8Array[] = [];
+  let closedEarly = false;
+  let res: Awaited<ReturnType<typeof sendHead>>;
+  try {
+    const onClose = () => { bridge ? bridge.onUpstreamClose() : (closedEarly = true); };
+    res = await sendHead(head, dial, (d) => { bridge ? bridge.onUpstreamData(d) : early.push(d); }, onClose, onClose);
   } catch (e) {
     return new Response(`could not reach port ${port} in the sandbox: ${String(e)}`, { status: 502 });
   }
 
-  conn.write(head);
-  if (body) conn.write(body);
-
-  try {
-    const { status, headers: h } = await headers.promise;
-    const out = new Headers();
-    for (const [k, v] of h) if (!HOP.has(k) && k !== "content-length") out.append(k, v);
-    if (status === 204 || status === 304) { finish(); conn.close(); return new Response(null, { status, headers: out }); }
-    return new Response(stream, { status, headers: out });
-  } catch (e) {
-    return new Response(`bad upstream response: ${String(e)}`, { status: 502 });
+  if (res.status !== 101) {
+    // Upstream refused the upgrade: pass its answer through as a plain response.
+    res.conn.close();
+    return new Response(`upstream refused websocket upgrade (${res.status})`, { status: res.status, headers: passHeaders(res.headers) });
   }
+  if (res.headers.get("sec-websocket-accept") !== wsAccept(key)) {
+    res.conn.close();
+    return new Response("bad upstream websocket handshake", { status: 502 });
+  }
+
+  bridge = new PreviewBridge(res.conn);
+  const acceptedProto = res.headers.get("sec-websocket-protocol");
+  // Bun rejects an empty headers object, so only pass one when there is something to say.
+  const headers = acceptedProto && req.headers.has("sec-websocket-protocol") ? { "sec-websocket-protocol": acceptedProto } : undefined;
+  if (!server.upgrade(req, { data: { kind: "preview", bridge }, ...(headers ? { headers } : {}) })) {
+    res.conn.close();
+    return new Response("websocket upgrade failed", { status: 500 });
+  }
+  for (const d of early) bridge.onUpstreamData(d);
+  if (closedEarly) bridge.onUpstreamClose();
+  return undefined;
 }
 
 /** Incremental HTTP/1.1 response parser: head, then body (chunked, length-delimited, or until close). */

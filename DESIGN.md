@@ -13,8 +13,9 @@ self-hosted machines and supervise them through a browser terminal.
   command started in a PTY with some env, gone when it ends. Disposable.
   The core does not know what runs inside. **Presets** on the CP turn a
   friendly request (repo + prompt + agent) into image/cmd/env; the built-in
-  `coding-agent` preset is the reason this service exists, but any image that
-  honours the sandbox contract below is a valid use case.
+  `coding-agent` preset is the reason this service exists, `jupyter` runs a
+  notebook server behind the preview proxy, and any image that honours the
+  sandbox contract below is a valid use case.
 - The control plane (**CP**) is the only API. It schedules sessions onto hosts,
   relays terminal bytes, proxies preview ports, and stores metadata. It is a
   single instance backed by SQLite and has no users of its own.
@@ -33,7 +34,7 @@ self-hosted machines and supervise them through a browser terminal.
 | 8 | CP auto-picks host by free slots; FIFO queue when full | Caller picks host; resource-based; labels |
 | 9 | Output = `git push` from inside the sandbox | Patch export with read-only clone |
 | 10 | Idle timeout: any PTY byte either direction resets; 30 m default | Client-input-only; count preview traffic |
-| 11 | Preview: `<port>-<sid>.preview.<domain>` + signed cookie | Path-based (breaks absolute paths); unauthenticated |
+| 11 | Preview: `<port>-<sid>.preview.<domain>` + signed cookie; WebSocket upgrades bridged (frames re-encoded at the CP) | Path-based (breaks absolute paths); unauthenticated; HTTP-only preview (added 2026-09-02: Jupyter kernels need it) |
 | 12 | Enrollment: daemon self-generates secret, CP sees fingerprint, pending + short code, admin approves | Join tokens; static shared secret; mTLS |
 | 13 | SQLite only; daemon is source of truth for running state | Redis (solves nothing without multi-instance) |
 | 14 | Raw Docker Engine API behind `SandboxDriver` | Sandcastle / TanStack sandbox (they want to own the agent run) |
@@ -98,7 +99,9 @@ POST /sessions ──► queued ──► creating ──► running ──► e
   (60 s, single session). Browser opens `wss://cp/attach?token=…`.
 - **Browser → preview:** parent calls `POST /sessions/:id/preview-token`
   (10 m). Browser hits `https://3000-s_x.preview.<domain>/?t=…`; CP verifies,
-  sets a signed, subdomain-scoped cookie, redirects to `/`.
+  sets a signed, subdomain-scoped cookie, redirects to `/`. The cookie also
+  gates WebSocket upgrades; the upstream never sees it. The proxy forwards
+  `x-forwarded-host` / `x-forwarded-proto` so apps can reconstruct the URL.
 - **Secrets:** anything in `secret_env` (the coding-agent preset puts
   `secrets.git_token`, `secrets.anthropic_api_key`, `llm.api_key` there).
   Forwarded to the daemon, injected as env into the PTY process. Not written to
@@ -149,7 +152,12 @@ POST   /sessions            core:   {owner_id, preset?, image?, cmd?: string[], 
                                       secret_env [GIT_TOKEN ANTHROPIC_API_KEY LLM_API_KEY]
                                     defaults: agent = DEVAGENTS_DEFAULT_AGENT (shell if prompt empty),
                                               model = DEVAGENTS_DEFAULT_MODEL (claude-sonnet-4-6), DEVAGENTS_CODEX_MODEL for codex
+                            preset "jupyter" adds: {repo?, ui?: lab|notebook, port?, secrets?: {git_token?}}
+                                    → image DEVAGENTS_JUPYTER_IMAGE (quay.io/jupyter/minimal-notebook), cmd = bash -lc <clone + jupyter>,
+                                      env JUPYTER_UI JUPYTER_PORT REPO, secret_env [GIT_TOKEN], idle default DEVAGENTS_JUPYTER_IDLE_S (4 h)
+                                      preview port = `port` (default 8888); Jupyter auth is off, the preview cookie is the gate
                             preset "custom" (default otherwise): nothing implied.
+                            a preset may default image / cmd / idle_timeout_s; caller-supplied values win.
                             caller env/secret_env are merged over the preset's. TERM and DEVAGENTS_SESSION_ID are reserved.
                             Operator defaults for every sandbox: DEVAGENTS_SANDBOX_ENV_<NAME>=value,
                             shorthands DEVAGENTS_LLM_BASE_URL / DEVAGENTS_LLM_API_KEY (or LLM_BASE_URL / LLM_API_KEY).
@@ -160,7 +168,7 @@ DELETE /sessions/:id
 POST   /sessions/:id/attach-token      → {token, wss_url}
 POST   /sessions/:id/preview-token {port} → {token, url}
 GET    /attach?token=                   WebSocket (xterm ↔ pty)
-*      <port>-<sid>.preview.<domain>/*  preview proxy
+*      <port>-<sid>.preview.<domain>/*  preview proxy (HTTP + WebSocket)
 GET    /dev                             only with DEVAGENTS_DEV=true
 ```
 
@@ -222,7 +230,7 @@ survive a CP restart: on boot they are marked `ended/failed` and must be recreat
 src/protocol/   messages.ts  framing.ts        shared types + binary framing
 src/shared/     ids.ts  errors.ts  log.ts
 src/cp/         main.ts  http.ts  presets.ts  tunnel.ts  scheduler.ts  store.ts
-                attach.ts  preview.ts  tokens.ts
+                attach.ts  preview.ts  wsframe.ts  tokens.ts
 src/agent/      main.ts  config.ts  tunnel.ts  docker.ts  pty.ts  sessions.ts
 src/dev/        index.html
 images/         Dockerfile  entry.sh  agent-setup.sh  git-askpass.sh

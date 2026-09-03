@@ -23,6 +23,22 @@ test("coding-agent: empty prompt -> shell; codex gets its own default model", ()
   expect(() => PRESETS["coding-agent"]!("s", { repo: "r", agent: "vim" as any }, cfg)).toThrow(/agent must be/);
 });
 
+test("jupyter: defaults image/cmd/idle, validates ui and port, splits the git token", () => {
+  const x = PRESETS.jupyter!("s", {}, cfg);
+  expect(x.env).toEqual({ JUPYTER_UI: "lab", JUPYTER_PORT: "8888", REPO: "" });
+  expect(x.secret_env).toEqual({});
+  expect(x.image).toBe("quay.io/jupyter/minimal-notebook:latest");
+  expect(x.cmd?.slice(0, 2)).toEqual(["bash", "-lc"]);
+  expect(x.cmd?.[2]).toContain("--ip=0.0.0.0");
+  expect(x.idle_timeout_s).toBe(4 * 3600);
+  const y = PRESETS.jupyter!("s", { repo: "https://x/nb.git", ui: "notebook", port: 9999, secrets: { git_token: "gt" } }, cfg);
+  expect(y.env).toEqual({ JUPYTER_UI: "notebook", JUPYTER_PORT: "9999", REPO: "https://x/nb.git" });
+  expect(y.secret_env).toEqual({ GIT_TOKEN: "gt" });
+  expect(() => PRESETS.jupyter!("s", { ui: "vscode" as any }, cfg)).toThrow(/ui must be/);
+  expect(() => PRESETS.jupyter!("s", { port: 70000 }, cfg)).toThrow(/port must be/);
+  expect(() => PRESETS.jupyter!("s", { repo: "  " }, cfg)).toThrow(/repo must be/);
+});
+
 test("custom: nothing implied", () => {
   expect(PRESETS.custom!("s", {}, cfg)).toEqual({ env: {}, secret_env: {} });
 });

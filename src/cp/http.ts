@@ -8,7 +8,7 @@ import type { Scheduler } from "./scheduler.ts";
 import type { Tokens } from "./tokens.ts";
 import { HttpError, badRequest, conflict, notFound, unauthorized } from "../shared/errors.ts";
 import { newSessionId } from "../shared/ids.ts";
-import { PRESETS, PRESET_NAMES, validateEnv, type CodingAgentFields } from "./presets.ts";
+import { PRESETS, PRESET_NAMES, validateEnv, type CodingAgentFields, type JupyterFields } from "./presets.ts";
 import type { AttachData } from "./attach.ts";
 import { logger } from "../shared/log.ts";
 
@@ -19,7 +19,7 @@ const PREVIEW_TTL_MS = 10 * 60_000;
 
 /** Core fields are generic; `preset` decides which extra fields mean something.
  *  Default preset: coding-agent when `repo` is given, custom otherwise. */
-export interface CreateSessionBody extends CodingAgentFields {
+export interface CreateSessionBody extends CodingAgentFields, JupyterFields {
   owner_id: string;
   preset?: string;
   image?: string;
@@ -129,19 +129,20 @@ export class Api {
   private createSession(b: CreateSessionBody): Response {
     if (!b.owner_id || typeof b.owner_id !== "string") throw badRequest("owner_id is required");
     const id = newSessionId();
-    const idle = Number(b.idle_timeout_s ?? 1800);
-    if (!Number.isFinite(idle) || idle < 60) throw badRequest("idle_timeout_s must be >= 60");
     const preset = b.preset ?? (b.repo ? "coding-agent" : "custom");
     const expand = PRESETS[preset] ?? (() => { throw badRequest(`preset must be one of ${PRESET_NAMES.join(", ")}`); })();
     if (b.cmd !== undefined && (!Array.isArray(b.cmd) || b.cmd.length === 0 || !b.cmd.every((c) => typeof c === "string"))) {
       throw badRequest("cmd must be a non-empty array of strings");
     }
     const expanded = expand(id, b, this.cfg);
+    const idle = Number(b.idle_timeout_s ?? expanded.idle_timeout_s ?? 1800);
+    if (!Number.isFinite(idle) || idle < 60) throw badRequest("idle_timeout_s must be >= 60");
+    const cmd = b.cmd ?? expanded.cmd ?? null;
     const env = { ...expanded.env, ...validateEnv("env", b.env) };
     const secret_env = { ...expanded.secret_env, ...validateEnv("secret_env", b.secret_env) };
     const row = this.store.insertSession({
-      id, owner_id: b.owner_id, preset, image: b.image?.trim() || this.cfg.defaultImage,
-      cmd: b.cmd ? JSON.stringify(b.cmd) : null, env: JSON.stringify(env),
+      id, owner_id: b.owner_id, preset, image: b.image?.trim() || expanded.image || this.cfg.defaultImage,
+      cmd: cmd ? JSON.stringify(cmd) : null, env: JSON.stringify(env),
       idle_timeout_s: idle, created_at: Date.now(),
     });
     this.sched.submit(row, secret_env);
