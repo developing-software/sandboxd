@@ -47,7 +47,8 @@ in
       default = "/etc/sandboxd/api.env";
       description = ''
         KEY=value file with SANDBOXD_SERVICE_TOKEN and optionally SANDBOXD_SECRET,
-        SANDBOXD_LLM_BASE_URL, SANDBOXD_LLM_API_KEY, SANDBOXD_SANDBOX_ENV_<NAME>.
+        SANDBOXD_JOIN_TOKEN, SANDBOXD_LLM_BASE_URL, SANDBOXD_LLM_API_KEY,
+        SANDBOXD_SANDBOX_ENV_<NAME>.
         The unit refuses to start without it rather than fall back to "dev-token".
       '';
     };

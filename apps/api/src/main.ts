@@ -22,7 +22,7 @@ const cfg = loadConfig()
 const store = new Store(cfg.dbPath)
 const tokens = new Tokens(cfg.secret)
 
-const hub = new HostHub(store)
+const hub = new HostHub(store, cfg.joinToken)
 const sched = new Scheduler(store, hub, cfg.sandboxEnv)
 hub.on(sched)
 sched.boot()
@@ -85,4 +85,7 @@ log.info('listening', {
   db: cfg.dbPath,
   docs: `${server.url}doc`,
 })
-log.info('defaults', { sandbox_env: Object.keys(cfg.sandboxEnv) })
+log.info('defaults', {
+  sandbox_env: Object.keys(cfg.sandboxEnv),
+  enrollment: cfg.joinToken ? 'join token or code' : 'code',
+})

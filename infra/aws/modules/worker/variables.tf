@@ -20,6 +20,12 @@ variable "ssh_public_keys" {
   type        = list(string)
 }
 
+variable "ssh_private_key_file" {
+  description = "Private key for the env upload. null = the ssh agent, which fails with gcr-ssh-agent (GNOME keyring); pass a key file there."
+  type        = string
+  default     = null
+}
+
 variable "tailscale_host" {
   description = "MagicDNS name of this host. Empty disables tailscale."
   type        = string
@@ -33,7 +39,7 @@ variable "extra_settings" {
 }
 
 variable "env" {
-  description = "KEY=value pairs for /etc/sandboxd/worker.env, e.g. registry credentials. The worker's own secret is self-generated on the host."
+  description = "KEY=value pairs for /etc/sandboxd/worker.env: SANDBOXD_JOIN_TOKEN, registry credentials. The worker's own identity is self-generated on the host."
   type        = map(string)
   sensitive   = true
   default     = {}

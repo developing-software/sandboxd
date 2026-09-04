@@ -11,6 +11,7 @@ export interface WorkerConfig {
   entry: string[] // command exec'd in the PTY inside the sandbox
   secret: string // self-generated, never leaves this machine
   fingerprint: string // sha256(secret) hex; what the CP sees
+  joinToken: string | null // SANDBOXD_JOIN_TOKEN; sent in the hello, approves without the code
 }
 
 interface HostFile {
@@ -47,5 +48,6 @@ export function loadConfig(env = process.env): WorkerConfig {
     entry,
     secret: file.secret,
     fingerprint: new Bun.CryptoHasher('sha256').update(file.secret).digest('hex'),
+    joinToken: env.SANDBOXD_JOIN_TOKEN || null,
   }
 }

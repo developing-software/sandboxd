@@ -81,9 +81,11 @@ resource "terraform_data" "env" {
   triggers_replace = [sha256(local.env_file), proxmox_virtual_environment_vm.vm.id]
 
   connection {
-    type = "ssh"
-    host = local.target
-    user = var.admin_user
+    type        = "ssh"
+    host        = local.target
+    user        = var.admin_user
+    agent       = var.ssh_private_key_file == null
+    private_key = var.ssh_private_key_file == null ? null : file(pathexpand(var.ssh_private_key_file))
   }
 
   provisioner "file" {

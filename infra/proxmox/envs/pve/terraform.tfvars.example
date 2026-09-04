@@ -13,5 +13,6 @@ cloudflare_account_id = "..."
 cloudflare_zone_id    = "..."
 
 service_token = "change-me"
+join_token    = "change-me-too" # omit to approve the worker by code in the UI instead
 llm_base_url  = "https://llm.example.com"
 llm_api_key   = "sk-..."

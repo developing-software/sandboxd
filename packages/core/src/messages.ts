@@ -46,6 +46,8 @@ export type HostMsg =
       fingerprint: string
       running: string[]
       max_sessions: number
+      /** Optional; a CP without SANDBOXD_JOIN_TOKEN ignores it. Old workers omit it. */
+      join_token?: string
     }
   | { type: 'heartbeat'; running: number; max: number }
   | { type: 'session.started'; sid: string }

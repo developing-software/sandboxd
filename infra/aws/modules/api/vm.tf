@@ -66,9 +66,11 @@ resource "terraform_data" "env" {
   triggers_replace = [sha256(local.env_file), aws_instance.this.id]
 
   connection {
-    type = "ssh"
-    host = aws_eip.this.public_ip
-    user = "root"
+    type        = "ssh"
+    host        = aws_eip.this.public_ip
+    user        = "root"
+    agent       = var.ssh_private_key_file == null
+    private_key = var.ssh_private_key_file == null ? null : file(pathexpand(var.ssh_private_key_file))
   }
 
   provisioner "file" {

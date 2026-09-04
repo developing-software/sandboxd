@@ -71,6 +71,7 @@ export class Tunnel {
         fingerprint: this.cfg.fingerprint,
         running: this.sessions.running(),
         max_sessions: this.cfg.maxSessions,
+        ...(this.cfg.joinToken ? { join_token: this.cfg.joinToken } : {}),
       })
     }
     ws.onmessage = (ev) => {
@@ -120,7 +121,7 @@ export class Tunnel {
       case 'hello.pending':
         this.hostId = msg.host_id
         console.log(
-          `\n  This host is waiting for approval on the control plane.\n  Host id: ${msg.host_id}\n  Code:    ${msg.code}\n`,
+          `\n  This host is waiting for approval on the control plane.\n  Host id: ${msg.host_id}\n  Code:    ${msg.code}\n  (or set SANDBOXD_JOIN_TOKEN here and on the control plane to skip this)\n`,
         )
         return
       case 'hello.rejected':

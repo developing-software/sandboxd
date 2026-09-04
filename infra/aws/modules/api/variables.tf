@@ -20,6 +20,12 @@ variable "ssh_public_keys" {
   type        = list(string)
 }
 
+variable "ssh_private_key_file" {
+  description = "Private key for the env uploads. null = the ssh agent, which fails with gcr-ssh-agent (GNOME keyring); pass a key file there."
+  type        = string
+  default     = null
+}
+
 variable "tailscale_host" {
   description = "MagicDNS name of this host (traefik dashboard lives there). Empty disables tailscale."
   type        = string

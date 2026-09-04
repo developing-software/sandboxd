@@ -33,10 +33,13 @@ terraform {
   }
 }
 
-# `aws sso login --profile <aws_profile>` first; CLOUDFLARE_API_TOKEN from the environment.
+# `aws sso login --profile <aws_profile>` first. The zone-scoped DNS token traefik gets is
+# all this env needs from Cloudflare, so the provider uses it too.
 provider "aws" {
   region  = var.region
   profile = var.aws_profile
 }
 
-provider "cloudflare" {}
+provider "cloudflare" {
+  api_token = var.cloudflare_dns_api_token
+}

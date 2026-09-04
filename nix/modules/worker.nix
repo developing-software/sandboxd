@@ -46,7 +46,7 @@ in
       type = types.nullOr types.str;
       default = null;
       example = "/etc/sandboxd/worker.env";
-      description = "Optional KEY=value file, e.g. registry credentials. The worker itself needs no secret.";
+      description = "Optional KEY=value file: SANDBOXD_JOIN_TOKEN to enrol without the printed code, registry credentials. The worker's own identity is self-generated.";
     };
   };
 

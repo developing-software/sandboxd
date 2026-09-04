@@ -81,7 +81,10 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
   private pending = new Map<string, WS>()
   private events: HubEvents = NO_EVENTS
 
-  constructor(private store: Store) {}
+  constructor(
+    private store: Store,
+    private joinToken: string | null = null,
+  ) {}
 
   /** Subscribe after construction, so the hub and its subscriber need no two-way constructor wiring. */
   on(events: HubEvents) {
@@ -135,7 +138,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
 
   // ---- enrollment ----
   private onHello(ws: WS, hello: Extract<HostMsg, { type: 'hello' }>) {
-    const e = enroll(this.store, hello)
+    const e = enroll(this.store, hello, this.joinToken)
     const { id: hostId, name } = e.host
     ws.data.hostId = hostId
     switch (e.kind) {
@@ -145,6 +148,8 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
         ws.close()
         return
       case 'pending':
+        if (e.badToken)
+          log.warn('join token did not match; waiting for the code', { hostId, name })
         log.info(e.isNew ? 'new host pending approval' : 'host waiting for approval', {
           hostId,
           name,
@@ -160,6 +165,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
         )
         return
       case 'accepted':
+        if (e.joined) log.info('host approved by join token', { hostId, name })
         this.accept(ws, hostId, hello.running, hello.max_sessions)
     }
   }
