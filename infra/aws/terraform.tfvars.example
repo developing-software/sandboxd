@@ -1,0 +1,17 @@
+region       = "eu-central-1"
+architecture = "arm64"
+
+domain         = "sandboxd.example.com"
+preview_domain = "preview.sandboxd.example.com"
+acme_email     = "ops@example.com"
+tailnet        = "example.ts.net"
+
+admin_user      = "admin"
+ssh_public_keys = ["ssh-ed25519 AAAA... you@laptop"]
+
+cloudflare_zone_id       = "..."
+cloudflare_dns_api_token = "..."
+
+service_token = "change-me"
+llm_base_url  = "https://llm.example.com"
+llm_api_key   = "sk-..."

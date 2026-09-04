@@ -1,0 +1,17 @@
+proxmox_endpoint = "https://pve:8006/"
+proxmox_node     = "pve"
+iso_file_id      = "local:iso/nixos-minimal-26.05-x86_64-linux.iso"
+
+domain         = "sandboxd.example.com"
+preview_domain = "example.com"
+tailnet        = "example.ts.net"
+
+admin_user      = "admin"
+ssh_public_keys = ["ssh-ed25519 AAAA... you@laptop"]
+
+cloudflare_account_id = "..."
+cloudflare_zone_id    = "..."
+
+service_token = "change-me"
+llm_base_url  = "https://llm.example.com"
+llm_api_key   = "sk-..."
