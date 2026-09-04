@@ -21,13 +21,12 @@ class NoHosts implements HostPlacement {
   destroySession() {}
 }
 
-function setup(maxServices = 2) {
+function setup() {
   const store = new Store(':memory:')
   const sched = new Scheduler(store, new NoHosts())
   const cfg = {
     publicUrl: 'https://cp.example.com',
     previewDomain: 'preview.example.com',
-    maxServices,
   }
   return { store, svc: new SessionService(cfg, store, new NoHosts(), sched, new Tokens('k')) }
 }
@@ -78,75 +77,4 @@ test('Env.validate: names, reserved keys, types', () => {
   expect(() => Env.validate('env', { TERM: 'x' })).toThrow(/reserved/)
   expect(() => Env.validate('env', { A: 1 })).toThrow(/must be a string/)
   expect(() => Env.validate('env', ['A'])).toThrow(/object/)
-})
-
-test('services: declarations split into the stored half and the secret half; compose merges after', () => {
-  const { store, svc } = setup(3)
-  const v = svc.create(
-    body({
-      owner_id: 'me',
-      image: 'i',
-      services: [
-        {
-          name: 'db',
-          image: 'postgres:16',
-          env: { POSTGRES_DB: 'app' },
-          secret_env: { POSTGRES_PASSWORD: 'pw' },
-          ready: { port: 5432 },
-        },
-        { name: 'cache', image: 'redis:7', cmd: ['redis-server', '--appendonly', 'yes'] },
-      ],
-      compose: {
-        services: {
-          mq: {
-            image: 'rabbitmq',
-            expose: ['5672'],
-            'x-sandboxd': { sandbox_env: { AMQP: 'amqp://mq' } },
-          },
-        },
-      },
-    }),
-  )
-  expect(v.services).toEqual([
-    {
-      name: 'db',
-      image: 'postgres:16',
-      env: { POSTGRES_DB: 'app' },
-      cmd: null,
-      ready: { port: 5432, timeout_s: 60 },
-    },
-    {
-      name: 'cache',
-      image: 'redis:7',
-      env: {},
-      cmd: ['redis-server', '--appendonly', 'yes'],
-      ready: null,
-    },
-    {
-      name: 'mq',
-      image: 'rabbitmq',
-      env: {},
-      cmd: null,
-      ready: { port: 5672, timeout_s: 60 },
-    },
-  ])
-  expect(v.env).toEqual({ AMQP: 'amqp://mq' })
-  expect(JSON.stringify(store.db.query('SELECT * FROM sessions').all())).not.toContain('pw')
-  const dup = body({
-    owner_id: 'me',
-    image: 'i',
-    services: [{ name: 'a', image: 'i' }],
-    compose: { services: { a: { image: 'i' } } },
-  })
-  expect(() => svc.create(dup)).toThrow(/name "a" is duplicated/)
-  const many = body({
-    owner_id: 'me',
-    image: 'i',
-    services: [
-      { name: 'a', image: 'i' },
-      { name: 'b', image: 'i' },
-    ],
-    compose: { services: { c: { image: 'i' }, d: { image: 'i' } } },
-  })
-  expect(() => svc.create(many)).toThrow(/at most 3/)
 })

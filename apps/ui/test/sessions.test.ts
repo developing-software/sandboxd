@@ -7,7 +7,6 @@ const loaded = loadPresetDir(resolve(import.meta.dir, '../presets'))
 const deps = (defaultImage: string | null = null) => ({
   defaultImage,
   presets: new PresetRegistry(loaded.presets),
-  catalog: loaded.catalog,
 })
 
 test('preset picked by repo; caller image, cmd, idle and env win over the preset', () => {
@@ -55,49 +54,11 @@ test('custom: image from the caller, else the configured default, else a 400', (
   expect(() => buildCreate(deps(), { owner_id: 'me', image: 'i', env: { A: 1 } })).toThrow(
     /env.A must be a string/,
   )
-})
-
-test('services: catalog names and references become one compose document; full declarations pass through', () => {
-  const b = buildCreate(deps(), {
+  // Unknown keys are not the UI's to judge: the API's strict schema names them.
+  expect(buildCreate(deps(), { owner_id: 'me', image: 'i', services: ['pg'] })).toEqual({
     owner_id: 'me',
     image: 'i',
-    services: [
-      'postgres',
-      { use: 'redis', name: 'cache', env: { X: '1' } },
-      { name: 'mq', image: 'rabbitmq', ready: { port: 5672 } },
-    ],
-    compose: 'services:\n  app: { build: . }\n  db2: { image: "postgres:16" }\n',
+    env: {},
+    secret_env: {},
   })
-  expect(b.services).toEqual([{ name: 'mq', image: 'rabbitmq', ready: { port: 5672 } }])
-  const doc = b.compose as { services: Record<string, Record<string, unknown>> }
-  expect(Object.keys(doc.services)).toEqual(['postgres', 'cache', 'app', 'db2'])
-  expect(doc.services.postgres!.image).toBe('postgres:16-alpine')
-  expect(doc.services.cache).toMatchObject({
-    image: 'redis:7-alpine',
-    environment: { X: '1' },
-  })
-  expect(() =>
-    buildCreate(deps(), { owner_id: 'me', image: 'i', services: ['mysql'] }),
-  ).toThrow(/unknown service "mysql" \(catalog: postgres, redis\)/)
-  expect(() =>
-    buildCreate(deps(), { owner_id: 'me', image: 'i', services: ['postgres', 'postgres'] }),
-  ).toThrow(/duplicated/)
-  expect(() =>
-    buildCreate(deps(), {
-      owner_id: 'me',
-      image: 'i',
-      services: ['postgres'],
-      compose: { services: { postgres: { image: 'x' } } },
-    }),
-  ).toThrow(/name "postgres" is duplicated/)
-  expect(() => buildCreate(deps(), { owner_id: 'me', image: 'i', compose: 5 })).toThrow(
-    /compose must be/,
-  )
-  expect(() => buildCreate(deps(), { owner_id: 'me', image: 'i', services: 'x' })).toThrow(
-    /must be an array/,
-  )
-  // Nothing picked: the caller's document goes to the API untouched, whatever it is.
-  expect(
-    buildCreate(deps(), { owner_id: 'me', image: 'i', compose: 'services: 1' }).compose,
-  ).toEqual({ services: 1 })
 })

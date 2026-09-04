@@ -12,16 +12,15 @@
   "env": { "builtin": true, "es2024": true },
   "rules": {
     // TypeScript declaration merging is deliberate here and is not a redeclaration: a Zod
-    // schema paired with its inferred type (`schema.ts`), and a class merged with a
-    // namespace so `Catalog.load` reads beside `new Catalog()`.
+    // schema paired with its inferred type (`schema.ts`).
     "no-redeclare": "off",
     // The regexes here match ASCII routes, headers and env names; the `u` flag buys nothing.
     "require-unicode-regexp": "off",
     // A negated `!== undefined` guard reads better than the inverted form the rule wants.
     "no-negated-condition": "off",
     "unicorn/no-negated-condition": "off",
-    // Sidecars start in dependency order and are torn down in reverse; the worker's orphan
-    // sweep talks to one Docker daemon. Sequential awaits are the point, not an oversight.
+    // The worker's orphan sweep talks to one Docker daemon, one container at a time.
+    // Sequential awaits are the point, not an oversight.
     "no-await-in-loop": "off",
     // The tunnel and the tests create one WebSocket per connection and want exactly one
     // handler per event; `on<event> =` says that, `addEventListener` would hide a second.

@@ -5,7 +5,6 @@ export type { Body, Expanded, FieldSpec, FieldType, Preset, PresetInfo } from '.
 export { loadPresetDir, loadPresetFile, type LoadedPresets } from './loader'
 export { parsePresetDoc, type PresetDoc } from './schema'
 export { presetFromDoc } from './preset'
-export { Catalog } from './catalog'
 
 /** Presets by name, plus the rule for picking one when the request names none:
  *  the first preset that `claims` the body, else `fallback`. */

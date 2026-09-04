@@ -32,7 +32,6 @@ function setup() {
   const cfg = {
     publicUrl: 'https://cp.example.com',
     previewDomain: 'preview.example.com',
-    maxServices: 2,
   }
   const app = createApp({
     serviceToken: 'secret',
@@ -87,51 +86,7 @@ test('POST /sessions: the schema rejects bad bodies with one entry per field, an
   await bad({ owner_id: 'me', image: 'i', idle_timeout_s: 5 }, /idle_timeout_s/)
   await bad({ owner_id: 'me', image: 'i', env: { TERM: 'x' } }, /reserved/)
   await bad({ owner_id: 'me', image: 'i', env: { 'bad-name': 'x' } }, /invalid variable name/)
-  await bad(
-    { owner_id: 'me', image: 'i', services: [{ name: 'Bad', image: 'i' }] },
-    /services.0.name/,
-  )
-  await bad(
-    { owner_id: 'me', image: 'i', services: [{ name: 'sandbox', image: 'i' }] },
-    /reserved/,
-  )
-  await bad({ owner_id: 'me', image: 'i', services: [{ name: 'a' }] }, /services.0.image/)
-  await bad(
-    { owner_id: 'me', image: 'i', services: [{ name: 'a', image: 'i', ready: { port: 0 } }] },
-    /ready.port/,
-  )
-  await bad(
-    {
-      owner_id: 'me',
-      image: 'i',
-      services: [
-        { name: 'a', image: 'i' },
-        { name: 'a', image: 'i' },
-      ],
-    },
-    /duplicated/,
-  )
-  await bad(
-    {
-      owner_id: 'me',
-      image: 'i',
-      services: [
-        { name: 'a', image: 'i' },
-        { name: 'b', image: 'i' },
-        { name: 'c', image: 'i' },
-      ],
-    },
-    /at most 2/,
-  )
-  await bad({ owner_id: 'me', image: 'i', compose: 5 }, /compose/)
-  await bad(
-    {
-      owner_id: 'me',
-      image: 'i',
-      compose: { services: { a: { image: 'i', privileged: true } } },
-    },
-    /privileged is not supported/,
-  )
+  await bad({ owner_id: 'me', image: 'i', services: [] }, /services/)
 })
 
 test('sessions: create, list, get, ownership, delete, tokens', async () => {
@@ -142,17 +97,12 @@ test('sessions: create, list, get, ownership, delete, tokens', async () => {
     cmd: ['bash', '-l'],
     env: { A: '1' },
     secret_env: { S: 'shh' },
-    services: [{ name: 'db', image: 'postgres', secret_env: { PW: 'pw' } }],
   })
   expect(created.status).toBe(201)
-  const s = (await created.json()) as { id: string; status: string; services: unknown[] }
+  const s = (await created.json()) as { id: string; status: string }
   expect(s.status).toBe('queued')
-  expect(s.services).toEqual([
-    { name: 'db', image: 'postgres', env: {}, cmd: null, ready: null },
-  ])
   const raw = JSON.stringify(store.db.query('SELECT * FROM sessions').all())
   expect(raw).not.toContain('shh')
-  expect(raw).not.toContain('pw')
 
   const list = await app.request('/sessions?owner_id=me', { headers: auth })
   expect(((await list.json()) as unknown[]).length).toBe(1)

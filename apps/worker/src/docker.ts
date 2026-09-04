@@ -15,19 +15,13 @@ interface ContainerSummary {
   Id: string
   Labels?: Record<string, string>
 }
-interface NetworkSummary {
-  Id: string
-  Name: string
-  Labels?: Record<string, string>
-}
 
-/** Every container and network carries these; anything created without them is invisible
- *  to the orphan sweep on start. */
+/** Every container carries these; anything created without them is invisible to the
+ *  orphan sweep on start. */
 const LABEL = {
   managed: 'sandboxd.managed',
   sid: 'sandboxd.sid',
   host: 'sandboxd.host',
-  role: 'sandboxd.role',
 } as const
 
 export class DockerDriver implements SandboxDriver {
@@ -55,20 +49,13 @@ export class DockerDriver implements SandboxDriver {
     return text ? (JSON.parse(text) as T) : null
   }
 
-  private labels(sid: string, role?: string): Record<string, string> {
-    return {
-      [LABEL.managed]: '1',
-      [LABEL.sid]: sid,
-      [LABEL.host]: this.owner,
-      ...(role ? { [LABEL.role]: role } : {}),
-    }
+  private labels(sid: string): Record<string, string> {
+    return { [LABEL.managed]: '1', [LABEL.sid]: sid, [LABEL.host]: this.owner }
   }
 
-  private filters(extra: string[] = []) {
+  private filters() {
     return encodeURIComponent(
-      JSON.stringify({
-        label: [`${LABEL.managed}=1`, `${LABEL.host}=${this.owner}`, ...extra],
-      }),
+      JSON.stringify({ label: [`${LABEL.managed}=1`, `${LABEL.host}=${this.owner}`] }),
     )
   }
 
@@ -81,25 +68,19 @@ export class DockerDriver implements SandboxDriver {
     await r.text() // drain progress stream until complete
   }
 
-  async create({ sid, image, role, network, alias, env, cmd }: CreateOpts): Promise<string> {
-    const name = role === 'sandbox' ? `sandboxd-${sid}` : `sandboxd-${sid}-${alias ?? 'svc'}`
+  async create({ sid, image }: CreateOpts): Promise<string> {
     const body = {
       Image: image,
-      // The sandbox is kept idle so a PTY can be exec'd into it; a service runs whatever the image runs unless overridden.
-      ...(role === 'sandbox' ? { Cmd: ['sleep', 'infinity'] } : cmd ? { Cmd: cmd } : {}),
-      Env: env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : undefined,
-      Labels: this.labels(sid, role),
+      // Kept idle so a PTY can be exec'd into it; the session's env arrives at exec time.
+      Cmd: ['sleep', 'infinity'],
+      Labels: this.labels(sid),
       HostConfig: {
         Init: true,
         // host.docker.internal lets a sandbox reach services on the host (e.g. a LiteLLM proxy on localhost).
         ExtraHosts: ['host.docker.internal:host-gateway'],
-        ...(network ? { NetworkMode: network } : {}),
       },
-      ...(network && alias
-        ? { NetworkingConfig: { EndpointsConfig: { [network]: { Aliases: [alias] } } } }
-        : {}),
     }
-    const createPath = `/containers/create?name=${name}`
+    const createPath = `/containers/create?name=sandboxd-${sid}`
     let res: Created | null
     try {
       res = await this.api<Created>('POST', createPath, body)
@@ -258,33 +239,12 @@ export class DockerDriver implements SandboxDriver {
     })
   }
 
-  async createNetwork(sid: string): Promise<string> {
-    const name = `sandboxd-${sid}`
-    await this.api('POST', '/networks/create', {
-      Name: name,
-      Driver: 'bridge',
-      Labels: this.labels(sid),
-    })
-    return name
-  }
-
-  async removeNetwork(sid: string): Promise<void> {
-    await this.api('DELETE', `/networks/sandboxd-${sid}`).catch((e) => {
-      if (!/-> 404/.test(String(e))) throw e
-    })
-  }
-
-  async listManaged(): Promise<{ containers: Managed[]; networks: Managed[] }> {
+  async listManaged(): Promise<Managed[]> {
     const containers =
       (await this.api<ContainerSummary[]>(
         'GET',
         `/containers/json?all=1&filters=${this.filters()}`,
       )) ?? []
-    const networks =
-      (await this.api<NetworkSummary[]>('GET', `/networks?filters=${this.filters()}`)) ?? []
-    return {
-      containers: containers.map((c) => ({ id: c.Id, sid: c.Labels?.[LABEL.sid] ?? '?' })),
-      networks: networks.map((n) => ({ id: n.Id, sid: n.Labels?.[LABEL.sid] ?? '?' })),
-    }
+    return containers.map((c) => ({ id: c.Id, sid: c.Labels?.[LABEL.sid] ?? '?' }))
   }
 }

@@ -1,6 +1,5 @@
-// Running sessions on this host. A session is a pod: optional private network,
-// sidecar services started first (with readiness probes), then the sandbox with
-// its PTY, ring buffer and idle timer. Everything is torn down together.
+// Running sessions on this host: one container each, with its PTY, ring buffer and
+// idle timer. Everything is torn down together.
 import type { Msg } from '@sandboxd/core/messages'
 import type { PtyStream, SandboxDriver } from './driver'
 import { PtyFanout } from './pty'
@@ -8,16 +7,9 @@ import { Log } from '@sandboxd/core/log'
 
 const log = Log.create('worker.sessions')
 
-/** The sandbox's alias on the session network, so services can reach it too. */
-const SANDBOX_ALIAS = 'sandbox'
-const READY_POLL_MS = 500
-
 interface Running {
   spec: Msg.Spec
   containerId: string
-  /** Sidecar container ids, in start order. */
-  services: string[]
-  network: string | null
   pty: PtyStream
   fanout: PtyFanout
   size: Msg.Size
@@ -40,7 +32,6 @@ export class SessionManager {
   constructor(
     private driver: SandboxDriver,
     private entry: string[],
-    private sleep = (ms: number) => Bun.sleep(ms),
   ) {
     this.timer = setInterval(() => this.reapIdle(), 15_000)
   }
@@ -63,31 +54,9 @@ export class SessionManager {
   async create(spec: Msg.Spec) {
     if (this.sessions.has(spec.sid)) return
     const sid = spec.sid
-    const services: string[] = []
-    let network: string | null = null
     let containerId: string | undefined
     try {
-      if (spec.services.length) network = await this.driver.createNetwork(sid)
-      for (const svc of spec.services) {
-        const id = await this.driver.create({
-          sid,
-          image: svc.image,
-          role: 'service',
-          network: network!,
-          alias: svc.name,
-          env: { ...svc.env, ...svc.secret_env },
-          ...(svc.cmd ? { cmd: svc.cmd } : {}),
-        })
-        services.push(id)
-        if (svc.ready) await this.waitReady(id, svc)
-        log.info('service up', { sid, service: svc.name })
-      }
-      containerId = await this.driver.create({
-        sid,
-        image: spec.image,
-        role: 'sandbox',
-        ...(network ? { network, alias: SANDBOX_ALIAS } : {}),
-      })
+      containerId = await this.driver.create({ sid, image: spec.image })
       const env = {
         ...spec.env,
         ...spec.secret_env,
@@ -97,74 +66,27 @@ export class SessionManager {
       const size = { ...INITIAL_SIZE }
       const pty = await this.driver.attach(containerId, spec.cmd ?? this.entry, env, size)
       const fanout = new PtyFanout()
-      const run: Running = {
-        spec,
-        containerId,
-        services,
-        network,
-        pty,
-        fanout,
-        size,
-        ending: false,
-      }
-      this.sessions.set(sid, run)
+      this.sessions.set(sid, { spec, containerId, pty, fanout, size, ending: false })
       pty.onData((d) => fanout.emit(d))
       pty.onExit(() => {
         void this.end(sid, 'exited')
       })
-      // Secrets were handed to docker; drop our copies.
+      // Secrets were handed to docker; drop our copy.
       spec.secret_env = {}
-      for (const svc of spec.services) svc.secret_env = {}
       this.events.started(sid)
-      log.info('session started', {
-        sid,
-        container: containerId.slice(0, 12),
-        services: spec.services.length,
-      })
+      log.info('session started', { sid, container: containerId.slice(0, 12) })
     } catch (e) {
       log.error('session create failed', { sid, err: String(e) })
-      await this.teardown(sid, containerId, services, network)
+      if (containerId) await this.remove(sid, containerId)
       this.events.ended(sid, 'failed', String(e))
     }
   }
 
-  /** Poll `dial` until the service accepts a TCP connection, or throw after its timeout. */
-  private async waitReady(id: string, svc: Msg.Service) {
-    const { port, timeout_s } = svc.ready!
-    const deadline = Date.now() + timeout_s * 1000
-    let lastErr = ''
-    while (Date.now() < deadline) {
-      try {
-        const d = await this.driver.dial(id, port)
-        d.end()
-        return
-      } catch (e) {
-        lastErr = String(e)
-        await this.sleep(READY_POLL_MS)
-      }
-    }
-    throw new Error(
-      `service ${svc.name} not ready on port ${port} after ${timeout_s}s: ${lastErr}`,
-    )
-  }
-
-  /** Remove the sandbox, then the services in reverse start order, then the network. Best effort. */
-  private async teardown(
-    sid: string,
-    containerId: string | undefined,
-    services: string[],
-    network: string | null,
-  ) {
-    const rm = (id: string) =>
-      this.driver
-        .destroy(id)
-        .catch((e) => log.warn('destroy failed', { sid, id: id.slice(0, 12), err: String(e) }))
-    if (containerId) await rm(containerId)
-    for (const id of services.toReversed()) await rm(id)
-    if (network)
-      await this.driver
-        .removeNetwork(sid)
-        .catch((e) => log.warn('network remove failed', { sid, err: String(e) }))
+  /** Best effort: a container that is already gone is not an error worth failing on. */
+  private async remove(sid: string, id: string) {
+    await this.driver
+      .destroy(id)
+      .catch((e) => log.warn('destroy failed', { sid, id: id.slice(0, 12), err: String(e) }))
   }
 
   attachViewer(
@@ -205,7 +127,7 @@ export class SessionManager {
     try {
       run.pty.close()
     } catch {}
-    await this.teardown(sid, run.containerId, run.services, run.network)
+    await this.remove(sid, run.containerId)
     log.info('session ended', { sid, reason })
     this.events.ended(sid, reason, detail)
   }

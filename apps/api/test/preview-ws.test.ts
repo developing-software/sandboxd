@@ -95,7 +95,6 @@ beforeAll(() => {
     image: 'img',
     cmd: null,
     env: {},
-    services: [],
     idle_timeout_s: 60,
     created_at: 1,
   })

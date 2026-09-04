@@ -1,16 +1,13 @@
 // A friendly request (preset + its fields) into what the API accepts: image, command,
-// env, secret env, sidecars. The API validates the result; this only translates.
+// env, secret env. The API validates the result; this only translates.
 import { Err } from '@sandboxd/core/errors'
 import { Json } from '@sandboxd/core/json'
 import type { CreateSessionInput } from '@sandboxd/api/schema'
 import type { PresetRegistry } from './presets/index'
-import type { Catalog } from './presets/catalog'
-import { Service } from './services'
 
 export interface BuildDeps {
   defaultImage: string | null
   presets: PresetRegistry
-  catalog: Catalog
 }
 
 export function buildCreate(d: BuildDeps, raw: unknown): CreateSessionInput {
@@ -30,21 +27,23 @@ export function buildCreate(d: BuildDeps, raw: unknown): CreateSessionInput {
   const out: CreateSessionInput = {
     owner_id: raw.owner_id,
     image,
-    env: { ...x.env, ...(raw.env === undefined ? {} : Service.strings(raw.env, 'env')) },
+    env: { ...x.env, ...(raw.env === undefined ? {} : strings(raw.env, 'env')) },
     secret_env: {
       ...x.secret_env,
-      ...(raw.secret_env === undefined ? {} : Service.strings(raw.secret_env, 'secret_env')),
+      ...(raw.secret_env === undefined ? {} : strings(raw.secret_env, 'secret_env')),
     },
   }
   const cmd = raw.cmd ?? x.cmd
   if (cmd !== undefined) out.cmd = cmd as string[]
   const idle = raw.idle_timeout_s ?? x.idle_timeout_s
   if (idle !== undefined) out.idle_timeout_s = idle as number
-
-  // Sidecars, in start order: the preset's defaults, the caller's picks, the caller's own file.
-  const { inline, compose } = Service.split(raw.services, d.catalog)
-  if (inline.length > 0) out.services = inline as CreateSessionInput['services']
-  const doc = Service.merge([x.services ?? {}, compose], raw.compose)
-  if (doc !== undefined) out.compose = doc as CreateSessionInput['compose']
   return out
+}
+
+/** A map that must already be all strings; the API checks names and size. */
+function strings(v: unknown, at: string): Record<string, string> {
+  if (!Json.isObj(v)) throw Err.badRequest(`${at} must be an object of strings`)
+  for (const [k, val] of Object.entries(v))
+    if (typeof val !== 'string') throw Err.badRequest(`${at}.${k} must be a string`)
+  return v as Record<string, string>
 }

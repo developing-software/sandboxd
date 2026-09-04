@@ -1,27 +1,22 @@
-// Reads presets/<name>/preset.yaml for every subdirectory of the presets dir,
-// plus presets/services.yaml. Synchronous and boot-time only: a bad file stops
-// the UI with a message naming it.
+// Reads presets/<name>/preset.yaml for every subdirectory of the presets dir.
+// Synchronous and boot-time only: a bad file stops the UI with a message naming it.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parsePresetDoc } from './schema'
 import { presetFromDoc } from './preset'
-import { Catalog } from './catalog'
 import type { Preset } from './types'
 
 export const PRESET_FILE = 'preset.yaml'
-export const CATALOG_FILE = 'services.yaml'
 
 export interface LoadedPresets {
   dir: string
   presets: Preset[]
-  catalog: Catalog
 }
 
 export function loadPresetDir(dir: string): LoadedPresets {
   const abs = resolve(dir)
   if (!existsSync(abs) || !statSync(abs).isDirectory())
     throw new Error(`presets dir not found: ${abs} (set SANDBOXD_PRESETS_DIR)`)
-  const catalog = Catalog.load(join(abs, CATALOG_FILE))
   const presets: Preset[] = []
   for (const entry of readdirSync(abs, { withFileTypes: true }).toSorted((a, b) =>
     a.name.localeCompare(b.name),
@@ -29,17 +24,17 @@ export function loadPresetDir(dir: string): LoadedPresets {
     if (!entry.isDirectory()) continue
     const file = join(abs, entry.name, PRESET_FILE)
     if (!existsSync(file)) continue
-    presets.push(loadPresetFile(entry.name, file, catalog))
+    presets.push(loadPresetFile(entry.name, file))
   }
   if (!presets.length)
     throw new Error(`no presets found in ${abs} (expected <name>/${PRESET_FILE})`)
-  return { dir: abs, presets, catalog }
+  return { dir: abs, presets }
 }
 
-export function loadPresetFile(name: string, file: string, catalog: Catalog): Preset {
+export function loadPresetFile(name: string, file: string): Preset {
   try {
     const doc: unknown = Bun.YAML.parse(readFileSync(file, 'utf8'))
-    return presetFromDoc(parsePresetDoc(name, doc), catalog)
+    return presetFromDoc(parsePresetDoc(name, doc))
   } catch (e) {
     throw new Error(`${file}: ${(e as Error).message}`, { cause: e })
   }

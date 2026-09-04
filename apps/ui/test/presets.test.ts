@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 import { loadConfig } from '../src/config'
 import {
-  Catalog,
   PresetRegistry,
   loadPresetDir,
   parsePresetDoc,
@@ -27,7 +26,7 @@ test('config: presets dir defaults to this app, image default is opt-in', () => 
   ).toMatchObject({ presetsDir: '/etc/sandboxd/presets', apiUrl: 'http://cp' })
 })
 
-test('shipped presets: one folder each, one image each, catalog from services.yaml', () => {
+test('shipped presets: one folder each, one image each', () => {
   expect(reg.names).toEqual(['coding-agent', 'custom', 'jupyter', 'vscode'])
   expect(reg.list().map((p) => [p.name, p.image])).toEqual([
     ['coding-agent', 'sandboxd-coding-agent:latest'],
@@ -35,20 +34,6 @@ test('shipped presets: one folder each, one image each, catalog from services.ya
     ['jupyter', 'sandboxd-jupyter:latest'],
     ['vscode', 'sandboxd-vscode:latest'],
   ])
-  expect(loaded.catalog.names).toEqual(['postgres', 'redis'])
-  expect(loaded.catalog.list()[0]).toEqual({
-    name: 'postgres',
-    image: 'postgres:16-alpine',
-    ready: { port: 5432, timeout_s: 90 },
-    sandbox_env: {
-      DATABASE_URL: 'postgres://sandboxd:sandboxd@postgres:5432/app',
-      PGHOST: 'postgres',
-      PGPORT: '5432',
-      PGUSER: 'sandboxd',
-      PGPASSWORD: 'sandboxd',
-      PGDATABASE: 'app',
-    },
-  })
   for (const p of reg.list()) expect(p.cmd).toBeNull() // every image ships its entry at /usr/local/bin/sandboxd-entry
 })
 
@@ -69,7 +54,6 @@ test('coding-agent: fields expand to entry.sh env; secrets split out; absent fie
   expect(x.secret_env).toEqual({ LLM_API_KEY: 'sk', GIT_TOKEN: 'gt' })
   expect(x.image).toBe('sandboxd-coding-agent:latest')
   expect(x.cmd).toBeUndefined()
-  expect(x.services).toBeUndefined()
   // AGENT / MODEL / BRANCH are defaulted by entry.sh, so an operator's SANDBOXD_SANDBOX_ENV_* survives (the API's
   // scheduler drops operator keys that the session env also sets).
   expect(preset('coding-agent').expand({ repo: 'r' }).env).toEqual({ REPO: 'r' })
@@ -161,16 +145,15 @@ const bad =
 
 test('schema: image/cmd/idle/preview/claims and their errors', () => {
   const p = parsePresetDoc('x', doc())
-  expect([
-    p.name,
-    p.image,
-    p.cmd,
-    p.idle_timeout_s,
-    p.preview,
-    p.claims,
-    p.fields,
-    p.services,
-  ]).toEqual(['x', 'sandboxd-x:latest', null, null, null, [], [], []])
+  expect([p.name, p.image, p.cmd, p.idle_timeout_s, p.preview, p.claims, p.fields]).toEqual([
+    'x',
+    'sandboxd-x:latest',
+    null,
+    null,
+    null,
+    [],
+    [],
+  ])
   expect(parsePresetDoc('x', doc({ image: null })).image).toBeNull()
   expect(parsePresetDoc('x', doc({ image: 'ghcr.io/o/i:1 ' })).image).toBe('ghcr.io/o/i:1')
   expect(parsePresetDoc('x', doc({ cmd: ['sh'], idle_timeout_s: 60 }))).toMatchObject({
@@ -184,6 +167,7 @@ test('schema: image/cmd/idle/preview/claims and their errors', () => {
   expect(bad({})).toThrow(/description is required/)
   expect(bad(doc({ name: 'y' }))).toThrow(/does not match the directory/)
   expect(bad(doc({ bogus: 1 }))).toThrow(/unknown key "bogus"/)
+  expect(bad(doc({ services: ['postgres'] }))).toThrow(/unknown key "services"/)
   expect(bad(doc({ image: '' }))).toThrow(/image must be/)
   expect(bad(doc({ cmd: [] }))).toThrow(/cmd must be/)
   expect(bad(doc({ idle_timeout_s: 5 }))).toThrow(/idle_timeout_s must be/)
@@ -270,7 +254,6 @@ test('preset from doc: bool/int coercion, nested paths, url normalisation', () =
         },
       }),
     ),
-    new Catalog(),
   )
   expect(p.expand({ a: { b: 3 }, flag: false, url: 'https://h/x//' }).env).toEqual({
     A_B: '3',
@@ -282,36 +265,6 @@ test('preset from doc: bool/int coercion, nested paths, url normalisation', () =
   expect(() => p.expand({ flag: 'no' })).toThrow(/flag must be true or false/)
   expect(() => p.expand({ a: [] })).toThrow(/a must be an object/)
   expect(p.claims).toBeUndefined()
-})
-
-test('preset services: catalog defaults become compose services; unknown catalog names fail at boot', () => {
-  const pg = {
-    image: 'postgres',
-    environment: ['POSTGRES_DB=app'],
-    'x-sandboxd': {
-      ready: { port: 5432 },
-      sandbox_env: { DATABASE_URL: 'u' },
-      secret_env: { PW: 'x' },
-    },
-  }
-  const catalog = new Catalog({ pg })
-  const p = presetFromDoc(
-    parsePresetDoc('x', doc({ services: ['pg', { use: 'pg', name: 'db', env: { A: '1' } }] })),
-    catalog,
-  )
-  expect(p.info.services).toEqual(['pg', 'db'])
-  expect(p.expand({}).services).toEqual({
-    pg,
-    db: { ...pg, environment: { POSTGRES_DB: 'app', A: '1' } },
-  })
-  expect(() =>
-    presetFromDoc(parsePresetDoc('x', doc({ services: ['redis'] })), catalog),
-  ).toThrow(/unknown catalog service "redis" \(catalog: pg\)/)
-  expect(() =>
-    presetFromDoc(parsePresetDoc('x', doc({ services: ['redis'] })), new Catalog()),
-  ).toThrow(/no presets\/services.yaml/)
-  expect(bad(doc({ services: [{ name: 'x' }] }))).toThrow(/use is required/)
-  expect(bad(doc({ services: [{ use: 'x', bogus: 1 }] }))).toThrow(/unknown key "bogus"/)
 })
 
 test('loader: missing dir and empty dir are boot errors naming the path', () => {

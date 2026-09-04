@@ -14,7 +14,7 @@ browser paths — attach (`attach.ts`) and preview (`preview/`).
 ## Rules
 
 - **The API knows nothing of presets.** No `preset`, `repo`, `prompt` here — a body names
-  an image, a command, env and sidecars. `CreateSession` is `.strict()` so a preset field
+  an image, a command and env. `CreateSession` is `.strict()` so a preset field
   sent here is a 400 that says the caller meant the UI. Presets live in `apps/ui`.
 - **Every shape lives in `schema.ts`, once.** A handler never restates a schema; a service
   takes the parsed type. Response schemas need `.meta({ description })` or the document is invalid.

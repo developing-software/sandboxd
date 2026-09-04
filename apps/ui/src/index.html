@@ -66,13 +66,6 @@
   <div id="fields"></div>
 
   <details>
-    <summary>services</summary>
-    <label>catalog <span class="muted">(GET /services; sidecars on the session network)</span></label>
-    <div id="services" class="muted">loading…</div>
-    <label>compose file <span class="muted">(services become sidecars; build-only ones are skipped)</span></label>
-    <textarea id="compose" placeholder="services:&#10;  db:&#10;    image: postgres:16&#10;    environment: { POSTGRES_PASSWORD: pw }"></textarea>
-  </details>
-  <details>
     <summary>image &amp; command</summary>
     <label>image <span class="muted">(empty = the preset's image)</span></label>
     <input id="image" placeholder="sandboxd-coding-agent:latest">
@@ -232,7 +225,6 @@ function describe(s) {
   const e = s.env || {};
   return [
     e.REPO, e.AGENT ? e.AGENT + (e.MODEL ? "/" + e.MODEL : "") : "",
-    s.services?.length ? "+ " + s.services.map((x) => x.name).join(", ") : "",
     s.cmd ? s.cmd.join(" ") : "", s.image,
   ].filter(Boolean).map(esc).join(" · ");
 }
@@ -250,7 +242,7 @@ function parseCmd(text) {
   const t = text.trim(); if (!t) return undefined;
   return t.startsWith("[") ? JSON.parse(t) : t.split(/\s+/);
 }
-// ---- presets & services: data in this app (presets/<name>/preset.yaml, presets/services.yaml); the API only sees the result ----
+// ---- presets: data in this app (presets/<name>/preset.yaml); the API only sees the result ----
 let presetsByName = {};
 async function loadPresets() {
   const list = await api("GET", "/presets");
@@ -258,18 +250,13 @@ async function loadPresets() {
   const current = $("preset").value;
   $("preset").innerHTML = list.map((p) => `<option value="${p.name}">${p.name} — ${esc(p.description)}</option>`).join("");
   $("preset").value = presetsByName[current] ? current : presetsByName["coding-agent"] ? "coding-agent" : list[0]?.name;
-  const catalog = await api("GET", "/services");
-  $("services").innerHTML = catalog.length ? catalog.map((s) => `
-    <div class="check"><input type="checkbox" id="svc-${s.name}" data-service="${s.name}">
-      <label for="svc-${s.name}">${s.name} <span class="muted">${esc(s.image)}${s.ready ? ` · ready on :${s.ready.port}` : ""}${Object.keys(s.sandbox_env).length ? ` · sets ${Object.keys(s.sandbox_env).join(", ")}` : ""}</span></label></div>`).join("")
-    : `<div class="muted">no catalog (presets/services.yaml)</div>`;
   renderFields();
 }
 function renderFields() {
   const p = presetsByName[$("preset").value];
   if (!p) return;
   $("presetDesc").textContent = (p.image ? `image ${p.image}` : "image: from the caller, else SANDBOXD_DEFAULT_IMAGE")
-    + (p.services.length ? ` · services ${p.services.join(", ")}` : "") + (p.idle_timeout_s ? ` · idle ${p.idle_timeout_s / 60} min` : "");
+    + (p.idle_timeout_s ? ` · idle ${p.idle_timeout_s / 60} min` : "");
   $("fields").innerHTML = p.fields.map((f) => {
     const id = `f-${f.name.replace(/\./g, "-")}`;
     const hint = f.description ? ` <span class="muted">(${esc(f.description)})</span>` : "";
@@ -321,9 +308,6 @@ $("create").onclick = async () => {
       env: parseEnv($("env").value), secret_env: parseEnv($("secretEnv").value),
     };
     collectFields(body);
-    const services = [...document.querySelectorAll("[data-service]:checked")].map((el) => el.dataset.service);
-    if (services.length) body.services = services;
-    if ($("compose").value.trim()) body.compose = $("compose").value;
     const s = await api("POST", "/sessions", body);
     note(`created ${s.id} (${s.status})`);
     refresh();

@@ -11,14 +11,13 @@ and ring buffer (`pty.ts`, `sessions.ts`), and talks to Docker over the raw Engi
 - **The driver is the seam.** Nothing above `driver.ts` may know it is Docker. Podman or
   Firecracker is a second implementation of the interface, not a branch.
 - **Secrets are exec-time only.** `secret_env` goes into `docker exec` and is dropped from
-  memory right after. Service `secret_env` is weaker by necessity (set at create); do not
-  widen that.
-- **Sidecars start in order and stop in reverse.** The sequential awaits in `sessions.ts`
-  are the point; do not parallelise them.
-- **Orphans are found by label.** Every container and network carries the `sandboxd.*`
-  labels from `docker.ts`; anything created without them is invisible to cleanup.
-- The worker is a per-session choice of _what_ to run only through `SessionSpec`. It
-  knows nothing about repos, agents or models.
+  memory right after. Nothing is set at container create.
+- **One session, one container.** No sidecars, no per-session network. A session that
+  needs more runs it inside the sandbox.
+- **Orphans are found by label.** Every container carries the `sandboxd.*` labels from
+  `docker.ts`; anything created without them is invisible to cleanup.
+- The worker is a per-session choice of _what_ to run only through `Msg.Spec`. It knows
+  nothing about repos, agents or models.
 
 ## Commands
 

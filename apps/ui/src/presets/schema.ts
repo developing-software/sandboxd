@@ -1,13 +1,11 @@
 // Structural validation of a parsed preset.yaml. Pure: no filesystem. Throws plain
 // Errors (this runs at boot, not per request); the loader prefixes the file name.
 import type { FieldSpec, FieldType, PresetInfo } from './types'
-import type { Service } from '../services'
 import { Json } from '@sandboxd/core/json'
 
 export interface PresetDoc extends PresetInfo {
   /** Body paths that must be present for this preset to claim a request that names none. */
   claims: string[]
-  serviceRefs: Service.Ref[]
 }
 
 const TOP_KEYS = new Set([
@@ -18,7 +16,6 @@ const TOP_KEYS = new Set([
   'idle_timeout_s',
   'preview',
   'claims_when',
-  'services',
   'fields',
 ])
 const FIELD_KEYS = new Set([
@@ -114,8 +111,6 @@ export function parsePresetDoc(name: string, doc: unknown): PresetDoc {
       if (!byName.has(c)) throw new Error(`claims_when.present "${c}" is not a field`)
   }
 
-  const serviceRefs = parseServiceRefs(doc.services)
-
   return {
     name,
     description: doc.description.trim(),
@@ -123,10 +118,8 @@ export function parsePresetDoc(name: string, doc: unknown): PresetDoc {
     cmd,
     idle_timeout_s: idle,
     preview,
-    services: serviceRefs.map((r) => r.name ?? r.use),
     fields,
     claims,
-    serviceRefs,
   }
 }
 
@@ -227,33 +220,6 @@ function checkDefault(at: string, f: FieldSpec, v: unknown): string | number | b
         )
       return v as number
   }
-}
-
-function parseServiceRefs(raw: unknown): Service.Ref[] {
-  if (raw === undefined || raw === null) return []
-  if (!Array.isArray(raw)) throw new Error('services must be a list')
-  return raw.map((item, i) => {
-    const at = `services[${i}]`
-    if (typeof item === 'string') return { use: item }
-    if (!Json.isObj(item)) throw new Error(`${at} must be a catalog name or a map`)
-    for (const k of Object.keys(item))
-      if (!['use', 'name', 'env'].includes(k)) throw new Error(`${at}: unknown key "${k}"`)
-    if (typeof item.use !== 'string' || !item.use) throw new Error(`${at}.use is required`)
-    const ref: Service.Ref = { use: item.use }
-    if (item.name !== undefined) {
-      if (typeof item.name !== 'string') throw new Error(`${at}.name must be a string`)
-      ref.name = item.name
-    }
-    if (item.env !== undefined) {
-      if (
-        !Json.isObj(item.env) ||
-        !Object.values(item.env).every((v) => typeof v === 'string')
-      )
-        throw new Error(`${at}.env must be a map of strings`)
-      ref.env = item.env as Record<string, string>
-    }
-    return ref
-  })
 }
 
 const bool = (at: string, key: string, v: unknown): boolean => {

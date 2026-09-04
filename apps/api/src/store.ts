@@ -3,11 +3,8 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Msg } from '@sandboxd/core/messages'
 
-/** The persisted (non-secret) half of a Msg.Service. */
-export type ServiceDecl = Omit<Msg.Service, 'secret_env'>
-
 /** Bump when the schema changes. There are no migrations: a db with another version is refused. */
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 export type HostStatus = 'pending' | 'approved' | 'revoked'
 export type SessionStatus = 'queued' | 'creating' | 'running' | 'ended'
@@ -36,8 +33,6 @@ export interface Session {
   cmd: string[] | null
   /** Non-secret env only. Secrets never reach the store. */
   env: Record<string, string>
-  /** Sidecars, without their secrets. */
-  services: ServiceDecl[]
   idle_timeout_s: number
   created_at: number
   started_at: number | null
@@ -48,21 +43,19 @@ export interface Session {
 
 export type NewSession = Pick<
   Session,
-  'id' | 'owner_id' | 'image' | 'cmd' | 'env' | 'services' | 'idle_timeout_s' | 'created_at'
+  'id' | 'owner_id' | 'image' | 'cmd' | 'env' | 'idle_timeout_s' | 'created_at'
 >
 
 /** Raw row shape: `cmd` and `env` are JSON text in SQLite. */
-interface SessionRow extends Omit<Session, 'cmd' | 'env' | 'services'> {
+interface SessionRow extends Omit<Session, 'cmd' | 'env'> {
   cmd: string | null
   env: string
-  services: string
 }
 
 const toSession = (r: SessionRow): Session => ({
   ...r,
   cmd: r.cmd ? JSON.parse(r.cmd) : null,
   env: JSON.parse(r.env),
-  services: JSON.parse(r.services),
 })
 
 export class Store {
@@ -92,8 +85,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, host_id TEXT REFERENCES hosts(id),
         status TEXT NOT NULL, ended_reason TEXT, ended_detail TEXT,
-        image TEXT NOT NULL, cmd TEXT, env TEXT NOT NULL, services TEXT NOT NULL DEFAULT '[]',
-        idle_timeout_s INTEGER NOT NULL,
+        image TEXT NOT NULL, cmd TEXT, env TEXT NOT NULL, idle_timeout_s INTEGER NOT NULL,
         created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, unknown_since INTEGER
       );
       CREATE INDEX IF NOT EXISTS sessions_owner ON sessions(owner_id, created_at);
@@ -149,15 +141,14 @@ export class Store {
 
   insertSession(s: NewSession): Session {
     this.db.run(
-      `INSERT INTO sessions (id,owner_id,status,image,cmd,env,services,idle_timeout_s,created_at)
-       VALUES (?,?,'queued',?,?,?,?,?,?)`,
+      `INSERT INTO sessions (id,owner_id,status,image,cmd,env,idle_timeout_s,created_at)
+       VALUES (?,?,'queued',?,?,?,?,?)`,
       [
         s.id,
         s.owner_id,
         s.image,
         s.cmd ? JSON.stringify(s.cmd) : null,
         JSON.stringify(s.env),
-        JSON.stringify(s.services),
         s.idle_timeout_s,
         s.created_at,
       ],

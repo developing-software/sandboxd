@@ -1,6 +1,6 @@
-// The UI server: the page, the preset and catalog listings, and POST /sessions, which
-// resolves a preset before calling the API. Everything else is forwarded to the API
-// with the service token added — the browser never holds it.
+// The UI server: the page, the preset listing, and POST /sessions, which resolves a
+// preset before calling the API. Everything else is forwarded to the API with the
+// service token added — the browser never holds it.
 import { Hono } from 'hono'
 import { hc } from 'hono/client'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
@@ -9,7 +9,6 @@ import { Err } from '@sandboxd/core/errors'
 import { Log } from '@sandboxd/core/log'
 import type { UiConfig } from './config'
 import type { PresetRegistry } from './presets/index'
-import type { Catalog } from './presets/catalog'
 import { buildCreate } from './sessions'
 
 const log = Log.create('ui')
@@ -17,7 +16,6 @@ const log = Log.create('ui')
 export interface AppDeps {
   cfg: Pick<UiConfig, 'apiUrl' | 'serviceToken' | 'defaultImage'>
   presets: PresetRegistry
-  catalog: Catalog
   html: () => Promise<string>
   /** Injected by tests. */
   fetch?: typeof fetch
@@ -37,15 +35,11 @@ export function createApp(d: AppDeps) {
   return new Hono({ strict: false })
     .get('/', async (c) => c.html(await d.html()))
     .get('/presets', (c) => c.json(d.presets.list()))
-    .get('/services', (c) => c.json(d.catalog.list()))
     .post('/sessions', async (c) => {
       const raw: unknown = await c.req.json().catch(() => {
         throw Err.badRequest('invalid JSON body')
       })
-      const json = buildCreate(
-        { defaultImage: d.cfg.defaultImage, presets: d.presets, catalog: d.catalog },
-        raw,
-      )
+      const json = buildCreate({ defaultImage: d.cfg.defaultImage, presets: d.presets }, raw)
       const res = await api.sessions.$post({ json }).catch((e) => {
         throw down(e)
       })

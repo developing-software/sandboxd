@@ -97,7 +97,6 @@ test('createSession counts optimistically until the next heartbeat', () => {
     idle_timeout_s: 60,
     env: {},
     secret_env: {},
-    services: [],
   })
   expect(c.capacity()).toEqual({ running: 1, max: 4 })
   expect(t.msgs[0]!.type).toBe('session.create')

@@ -1,19 +1,11 @@
-// A runtime Preset from a validated preset.yaml: field validation, env emission
-// and catalog service resolution. Request-time errors are 400s.
+// A runtime Preset from a validated preset.yaml: field validation and env emission.
+// Request-time errors are 400s.
 import { Err } from '@sandboxd/core/errors'
-import { Service } from '../services'
-import type { Catalog } from './catalog'
 import type { PresetDoc } from './schema'
 import type { Body, Expanded, FieldSpec, Preset } from './types'
 
-export function presetFromDoc(doc: PresetDoc, catalog: Catalog): Preset {
-  for (const r of doc.serviceRefs) {
-    if (!catalog.get(r.use))
-      throw new Error(
-        `services: unknown catalog service "${r.use}"${catalog.names.length > 0 ? ` (catalog: ${catalog.names.join(', ')})` : ' (no presets/services.yaml)'}`,
-      )
-  }
-  const { claims, serviceRefs, ...info } = doc
+export function presetFromDoc(doc: PresetDoc): Preset {
+  const { claims, ...info } = doc
   return {
     name: doc.name,
     info,
@@ -32,19 +24,9 @@ export function presetFromDoc(doc: PresetDoc, catalog: Catalog): Preset {
       if (info.image) out.image = info.image
       if (info.cmd) out.cmd = info.cmd
       if (info.idle_timeout_s !== null) out.idle_timeout_s = info.idle_timeout_s
-      if (serviceRefs.length > 0) out.services = composeOf(serviceRefs, catalog)
       return out
     },
   }
-}
-
-function composeOf(refs: PresetDoc['serviceRefs'], catalog: Catalog): Service.Map {
-  const out: Service.Map = {}
-  refs.forEach((r, i) => {
-    const [name, svc] = Service.resolve(r, catalog, `preset services[${i}]`)
-    out[name] = svc
-  })
-  return out
 }
 
 /** The env string for a field, or undefined when it is absent and has no default. */

@@ -22,7 +22,7 @@ control message on the tunnel), `framing.ts` (the binary frame), plus `ids.ts`, 
 
 | File          | Namespace | What                                                         |
 | ------------- | --------- | ------------------------------------------------------------ |
-| `messages.ts` | `Msg`     | The wire contract: `Host`, `Cp`, `Spec`, `Service`, `parse`  |
+| `messages.ts` | `Msg`     | The wire contract: `Host`, `Cp`, `Spec`, `parse`             |
 | `framing.ts`  | `Frame`   | `encode`, `decode`, `HEADER`                                 |
 | `bytes.ts`    | `Bytes`   | `concat`, `crlf`, `crlf2`                                    |
 | `ids.ts`      | `Id`      | `session`, `host`, `code`, `random`                          |

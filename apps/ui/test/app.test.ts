@@ -21,20 +21,17 @@ function setup() {
   const app = createApp({
     cfg: { apiUrl: 'http://api.test', serviceToken: 'secret', defaultImage: null },
     presets: new PresetRegistry(loaded.presets),
-    catalog: loaded.catalog,
     html: async () => '<h1>ui</h1>',
     fetch: fetch as typeof globalThis.fetch,
   })
   return { app, calls }
 }
 
-test('the page, presets and services are served here', async () => {
+test('the page and the presets are served here', async () => {
   const { app, calls } = setup()
   expect(await (await app.request('/')).text()).toBe('<h1>ui</h1>')
   const presets = (await (await app.request('/presets')).json()) as { name: string }[]
   expect(presets.map((p) => p.name)).toEqual(['coding-agent', 'custom', 'jupyter', 'vscode'])
-  const services = (await (await app.request('/services')).json()) as { name: string }[]
-  expect(services.map((s) => s.name)).toEqual(['postgres', 'redis'])
   expect(calls).toEqual([])
 })
 
@@ -43,12 +40,12 @@ test('POST /sessions resolves the preset, then calls the API with the token', as
   const res = await app.request('/sessions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ owner_id: 'me', repo: 'https://x/r.git', services: ['redis'] }),
+    body: JSON.stringify({ owner_id: 'me', repo: 'https://x/r.git' }),
   })
   expect(res.status).toBe(201)
   expect(await res.json()).toEqual({ id: 's_1', status: 'queued' })
   expect(calls).toHaveLength(1)
-  expect(calls[0]).toMatchObject({
+  expect(calls[0]).toEqual({
     method: 'POST',
     url: 'http://api.test/sessions',
     auth: 'Bearer secret',
@@ -56,7 +53,7 @@ test('POST /sessions resolves the preset, then calls the API with the token', as
       owner_id: 'me',
       image: 'sandboxd-coding-agent:latest',
       env: { REPO: 'https://x/r.git' },
-      compose: { services: { redis: { image: 'redis:7-alpine' } } },
+      secret_env: {},
     },
   })
   const bad = await app.request('/sessions', {
@@ -91,7 +88,6 @@ test('an unreachable API is a 502 that names it, not an internal error', async (
   const app = createApp({
     cfg: { apiUrl: 'http://api.test', serviceToken: 'secret', defaultImage: null },
     presets: new PresetRegistry(loaded.presets),
-    catalog: loaded.catalog,
     html: async () => '',
     fetch: (async () => {
       throw new Error('Unable to connect. Is the computer able to access the url?')

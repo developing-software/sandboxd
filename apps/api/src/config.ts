@@ -14,8 +14,6 @@ export interface CpConfig {
   /** Operator-level env injected into every sandbox at placement time (never persisted).
    *  From SANDBOXD_SANDBOX_ENV_<NAME>=value, plus the LLM_BASE_URL / LLM_API_KEY shorthands. */
   sandboxEnv: Record<string, string>
-  /** Cap on sidecar services per session (SANDBOXD_MAX_SERVICES, default 8). */
-  maxServices: number
   /** SANDBOXD_JOIN_TOKEN: a hello carrying it is approved without the printed code. null = code only. */
   joinToken: string | null
   dbPath: string
@@ -52,7 +50,6 @@ export function loadConfig(env: Vars = process.env): CpConfig {
     publicUrl,
     previewDomain: env.SANDBOXD_PREVIEW_DOMAIN ?? 'preview.localhost',
     sandboxEnv,
-    maxServices: Number(env.SANDBOXD_MAX_SERVICES || 8),
     joinToken: env.SANDBOXD_JOIN_TOKEN || null,
     dbPath: env.SANDBOXD_DB ?? 'cp.db',
   }

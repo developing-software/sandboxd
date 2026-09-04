@@ -1,5 +1,5 @@
-// UI config. This app is the parent-app stand-in: it holds the service token, the
-// presets and the catalog, and talks to the API on the user's behalf.
+// UI config. This app is the parent-app stand-in: it holds the service token and the
+// presets, and talks to the API on the user's behalf.
 import { fileURLToPath } from 'node:url'
 
 export type Vars = Record<string, string | undefined>
@@ -9,7 +9,7 @@ export interface UiConfig {
   /** The control plane, e.g. http://localhost:8080. */
   apiUrl: string
   serviceToken: string
-  /** Directory of <name>/preset.yaml (+ services.yaml). SANDBOXD_PRESETS_DIR; default = this app's presets/. */
+  /** Directory of <name>/preset.yaml. SANDBOXD_PRESETS_DIR; default = this app's presets/. */
   presetsDir: string
   /** Image for sessions whose preset implies none and whose caller sends none. */
   defaultImage: string | null

@@ -1,4 +1,4 @@
-// Validation of caller-supplied env maps (session env/secret_env and per-service env).
+// Validation of caller-supplied env maps (session env and secret_env).
 import { Err } from '@sandboxd/core/errors'
 
 /** Set by the daemon on every PTY; callers may not override them. */

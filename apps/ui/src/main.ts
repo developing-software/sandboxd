@@ -6,7 +6,7 @@ import { Log } from '@sandboxd/core/log'
 const log = Log.create('ui')
 const cfg = loadConfig()
 
-// Presets and the service catalog are data on disk; a bad file is a boot error, not a runtime surprise.
+// Presets are data on disk; a bad file is a boot error, not a runtime surprise.
 let loaded: LoadedPresets
 try {
   loaded = loadPresetDir(cfg.presetsDir)
@@ -19,15 +19,10 @@ const presets = new PresetRegistry(loaded.presets)
 const app = createApp({
   cfg,
   presets,
-  catalog: loaded.catalog,
   // Re-read on every request so edits show up on reload without a restart.
   html: () => Bun.file(new URL('./index.html', import.meta.url)).text(),
 })
 
 const server = Bun.serve({ port: cfg.port, fetch: app.fetch })
 log.info('listening', { url: server.url.toString(), api: cfg.apiUrl })
-log.info('presets', {
-  dir: loaded.dir,
-  presets: presets.names,
-  services: loaded.catalog.names,
-})
+log.info('presets', { dir: loaded.dir, presets: presets.names })

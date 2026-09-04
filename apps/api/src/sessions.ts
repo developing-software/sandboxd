@@ -1,14 +1,12 @@
 // Session use cases behind the HTTP API. The body has already been shaped by
-// `CreateSession`; what is left is the semantics: merging sidecar sources, splitting
-// secrets, and ownership (the CP has no user table, `owner_id` is the whole model).
+// `CreateSession`; what is left is the semantics: splitting secrets from what is stored,
+// and ownership (the CP has no user table, `owner_id` is the whole model).
 import type { CpConfig } from './config'
 import type { Store, Session } from './store'
 import type { Scheduler } from './scheduler'
 import type { Tokens } from './tokens'
 import { Err } from '@sandboxd/core/errors'
 import { Id } from '@sandboxd/core/ids'
-import { Service } from './services'
-import { Compose } from './compose'
 import { DEFAULT_IDLE_S, type CreateSession, type SessionView } from './schema'
 
 const ATTACH_TTL_MS = 60_000
@@ -20,7 +18,7 @@ export interface HostOnline {
 
 export class SessionService {
   constructor(
-    private cfg: Pick<CpConfig, 'publicUrl' | 'previewDomain' | 'maxServices'>,
+    private cfg: Pick<CpConfig, 'publicUrl' | 'previewDomain'>,
     private store: Store,
     private hosts: HostOnline,
     private sched: Scheduler,
@@ -29,24 +27,16 @@ export class SessionService {
 
   create(b: CreateSession): SessionView {
     const id = Id.session()
-    // Sidecars from both sources, in start order: the caller's list, then its compose file.
-    const services = Service.merge(
-      [Service.from(b.services ?? []), Compose.parse(b.compose)],
-      this.cfg.maxServices,
-    )
-    // Precedence: caller env > what services ask to inject (DATABASE_URL and friends).
-    const env = { ...Service.sandboxEnv(services), ...b.env }
     const row = this.store.insertSession({
       id,
       owner_id: b.owner_id,
       image: b.image,
       cmd: b.cmd ?? null,
-      env,
-      services: services.decls,
+      env: b.env ?? {},
       idle_timeout_s: b.idle_timeout_s ?? DEFAULT_IDLE_S,
       created_at: Date.now(),
     })
-    this.sched.submit(row, { ...b.secret_env }, services.secrets)
+    this.sched.submit(row, { ...b.secret_env })
     return this.view(this.store.session(id)!)
   }
 
@@ -108,7 +98,6 @@ export class SessionService {
       image: s.image,
       cmd: s.cmd,
       env: s.env,
-      services: s.services,
       idle_timeout_s: s.idle_timeout_s,
       created_at: s.created_at,
       started_at: s.started_at,

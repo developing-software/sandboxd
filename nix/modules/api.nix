@@ -32,11 +32,6 @@ in
       example = "preview.sandboxd.example.com";
       description = "Preview proxy wildcard: <port>-<sid>.<previewDomain> (SANDBOXD_PREVIEW_DOMAIN).";
     };
-    maxServices = mkOption {
-      type = types.ints.positive;
-      default = 8;
-      description = "Sidecar services per session (SANDBOXD_MAX_SERVICES).";
-    };
     extraEnv = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -72,7 +67,6 @@ in
         SANDBOXD_PORT = toString cfg.port;
         SANDBOXD_PUBLIC_URL = cfg.publicUrl;
         SANDBOXD_PREVIEW_DOMAIN = cfg.previewDomain;
-        SANDBOXD_MAX_SERVICES = toString cfg.maxServices;
         SANDBOXD_DB = "/var/lib/sandboxd-api/cp.db";
       }
       // cfg.extraEnv;

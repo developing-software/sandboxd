@@ -49,7 +49,6 @@ function setup(sandboxEnv: Record<string, string> = {}) {
       image: 'img',
       cmd: null,
       env,
-      services: [],
       idle_timeout_s: 60,
       created_at: Date.now() + seq++,
     })
@@ -175,7 +174,6 @@ test('cmd round-trips as JSON; null means daemon default', () => {
       image: 'img',
       cmd: ['python3', '-m', 'http.server'],
       env: {},
-      services: [],
       idle_timeout_s: 60,
       created_at: 1,
     }),
@@ -188,7 +186,6 @@ test('cmd round-trips as JSON; null means daemon default', () => {
       image: 'img',
       cmd: null,
       env: {},
-      services: [],
       idle_timeout_s: 60,
       created_at: 2,
     }),
@@ -196,38 +193,4 @@ test('cmd round-trips as JSON; null means daemon default', () => {
   )
   expect(hub.created[0]?.spec.cmd).toEqual(['python3', '-m', 'http.server'])
   expect(hub.created[1]?.spec.cmd).toBeNull()
-})
-
-test('service secrets travel in the spec by name and are never persisted', () => {
-  const { store, hub, sched, host } = setup()
-  host('h1', 1)
-  const row = store.insertSession({
-    id: 's_p',
-    owner_id: 'o',
-    image: 'img',
-    cmd: null,
-    env: {},
-    idle_timeout_s: 60,
-    created_at: 1,
-    services: [
-      {
-        name: 'db',
-        image: 'postgres:16',
-        env: { POSTGRES_USER: 'app' },
-        cmd: null,
-        ready: { port: 5432, timeout_s: 30 },
-      },
-    ],
-  })
-  sched.submit(row, {}, { db: { POSTGRES_PASSWORD: 'pw' } })
-  const svc = hub.created[0]!.spec.services[0]!
-  expect(svc).toEqual({
-    name: 'db',
-    image: 'postgres:16',
-    env: { POSTGRES_USER: 'app' },
-    secret_env: { POSTGRES_PASSWORD: 'pw' },
-    cmd: null,
-    ready: { port: 5432, timeout_s: 30 },
-  })
-  expect(JSON.stringify(store.db.query('SELECT * FROM sessions').all())).not.toContain('pw')
 })

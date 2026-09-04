@@ -10,14 +10,9 @@ const driver = new DockerDriver(cfg.dockerSock, cfg.fingerprint)
 
 // v1 limitation: sandboxes from a previous daemon run can't be re-attached
 // (the PTY and ring buffer died with the process), so they are removed.
-const orphans = await driver.listManaged()
-for (const c of orphans.containers) {
+for (const c of await driver.listManaged()) {
   log.warn('removing orphaned container from previous run', { sid: c.sid })
   await driver.destroy(c.id)
-}
-for (const n of orphans.networks) {
-  log.warn('removing orphaned network from previous run', { sid: n.sid })
-  await driver.removeNetwork(n.sid)
 }
 
 const sessions = new SessionManager(driver, cfg.entry)
