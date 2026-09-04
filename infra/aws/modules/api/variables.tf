@@ -39,12 +39,12 @@ variable "env" {
 }
 
 variable "hostname" {
-  description = "Public host of the control plane, e.g. sandboxd.example.com (a record in cloudflare_zone_id)."
+  description = "Public host of the control plane, e.g. sandboxd.example.com. The caller creates the A record from the `ip` output."
   type        = string
 }
 
 variable "preview_domain" {
-  description = "Preview wildcard, e.g. preview.sandboxd.example.com. Records are unproxied and traefik holds a Let's Encrypt wildcard, so any depth works."
+  description = "Preview wildcard, e.g. preview.sandboxd.example.com; the caller creates the `*.<preview_domain>` A record. traefik holds a Let's Encrypt wildcard, so any depth works."
   type        = string
 }
 
@@ -52,13 +52,15 @@ variable "acme_email" {
   type = string
 }
 
-variable "cloudflare_zone_id" {
-  type = string
+variable "acme_dns_provider" {
+  description = "Lego DNS-01 provider name traefik uses for the wildcard: cloudflare, route53, ... (https://doc.traefik.io/traefik/https/acme/#providers)."
+  type        = string
+  default     = "cloudflare"
 }
 
-variable "cloudflare_dns_api_token" {
-  description = "Zone DNS:Edit token for the Let's Encrypt DNS-01 challenge (traefik)."
-  type        = string
+variable "acme_env" {
+  description = "Environment for that provider, written to /etc/sandboxd/traefik.env: e.g. { CF_DNS_API_TOKEN = ... } or { AWS_HOSTED_ZONE_ID = ..., AWS_ACCESS_KEY_ID = ..., AWS_SECRET_ACCESS_KEY = ... }."
+  type        = map(string)
   sensitive   = true
 }
 

@@ -40,6 +40,12 @@ in
       default = "";
       description = "ACME account email (hosts that terminate TLS themselves).";
     };
+    acmeDnsProvider = mkOption {
+      type = types.str;
+      default = "cloudflare";
+      example = "route53";
+      description = "Lego DNS-01 provider for the wildcard cert; its credentials come from /etc/sandboxd/traefik.env.";
+    };
     tailscale = {
       enable = mkOption {
         type = types.bool;

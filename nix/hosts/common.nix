@@ -32,7 +32,7 @@ in
   services.tailscale.enable = host.tailscale.enable;
   services.resolved = {
     enable = true;
-    dnssec = "false";
+    settings.Resolve.DNSSEC = "false";
   };
 
   environment.systemPackages = with pkgs; [

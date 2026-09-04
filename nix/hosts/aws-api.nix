@@ -16,7 +16,7 @@ in
   };
   services.sandboxd.ingress = {
     enable = true;
-    inherit (host) previewDomain acmeEmail;
+    inherit (host) previewDomain acmeEmail acmeDnsProvider;
     host = host.domain;
     tls = "letsencrypt";
     tailscale = {

@@ -3,13 +3,15 @@ locals {
   app_config = "aws-api"
   units      = ["sandboxd-api.service", "traefik.service"]
   settings = merge({
-    domain        = var.hostname
-    previewDomain = var.preview_domain
-    acmeEmail     = var.acme_email
-    admin         = { user = var.admin_user, sshKeys = var.ssh_public_keys }
-    tailscale     = { enable = var.tailscale_host != "", host = var.tailscale_host }
+    domain          = var.hostname
+    previewDomain   = var.preview_domain
+    acmeEmail       = var.acme_email
+    acmeDnsProvider = var.acme_dns_provider
+    admin           = { user = var.admin_user, sshKeys = var.ssh_public_keys }
+    tailscale       = { enable = var.tailscale_host != "", host = var.tailscale_host }
   }, var.extra_settings)
-  env = var.env
+  env       = var.env
+  acme_file = join("\n", concat([for k, v in var.acme_env : "${k}=\"${replace(v, "\"", "\\\"")}\""], [""]))
 }
 
 resource "aws_security_group" "this" {
@@ -44,27 +46,10 @@ resource "aws_security_group" "this" {
   }
 }
 
-resource "cloudflare_dns_record" "api" {
-  zone_id = var.cloudflare_zone_id
-  name    = var.hostname
-  type    = "A"
-  content = aws_eip.this.public_ip
-  proxied = false
-  ttl     = 300
-}
-
-resource "cloudflare_dns_record" "preview" {
-  zone_id = var.cloudflare_zone_id
-  name    = "*.${var.preview_domain}"
-  type    = "A"
-  content = aws_eip.this.public_ip
-  proxied = false
-  ttl     = 300
-}
-
-# traefik reads CF_DNS_API_TOKEN from its own env file (services.sandboxd.ingress.acmeEnvironmentFile).
+# traefik reads the DNS provider's credentials from its own env file
+# (services.sandboxd.ingress.acmeEnvironmentFile).
 resource "terraform_data" "traefik_env" {
-  triggers_replace = [sha256(var.cloudflare_dns_api_token), aws_instance.this.id]
+  triggers_replace = [sha256(local.acme_file), aws_instance.this.id]
 
   connection {
     type = "ssh"
@@ -73,7 +58,7 @@ resource "terraform_data" "traefik_env" {
   }
 
   provisioner "file" {
-    content     = "CF_DNS_API_TOKEN=\"${var.cloudflare_dns_api_token}\"\n"
+    content     = local.acme_file
     destination = "/tmp/sandboxd-traefik.env"
   }
 

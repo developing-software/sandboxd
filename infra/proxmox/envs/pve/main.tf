@@ -1,5 +1,6 @@
 # One control plane behind a Cloudflare Tunnel and one worker, both NixOS VMs on Proxmox.
 locals {
+  flake = "../../../.."
   api_env = merge(
     { SANDBOXD_SERVICE_TOKEN = var.service_token },
     var.llm_base_url == null ? {} : { SANDBOXD_LLM_BASE_URL = var.llm_base_url },
@@ -9,9 +10,9 @@ locals {
 }
 
 module "api" {
-  source = "./modules/api"
+  source = "../../modules/api"
 
-  flake           = "../.."
+  flake           = local.flake
   node_name       = var.proxmox_node
   iso_file_id     = var.iso_file_id
   admin_user      = var.admin_user
@@ -26,9 +27,9 @@ module "api" {
 }
 
 module "worker" {
-  source = "./modules/worker"
+  source = "../../modules/worker"
 
-  flake           = "../.."
+  flake           = local.flake
   node_name       = var.proxmox_node
   iso_file_id     = var.iso_file_id
   admin_user      = var.admin_user

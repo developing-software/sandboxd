@@ -1,6 +1,12 @@
+variable "aws_profile" {
+  description = "Named profile from ~/.aws/config. null = the default credential chain."
+  type        = string
+  default     = null
+}
+
 variable "region" {
   type    = string
-  default = "eu-central-1"
+  default = "us-east-2"
 }
 
 variable "architecture" {
@@ -58,7 +64,7 @@ variable "cloudflare_zone_id" {
 }
 
 variable "cloudflare_dns_api_token" {
-  description = "Zone DNS:Edit token for traefik's DNS-01 challenge."
+  description = "Zone DNS:Edit token traefik uses for the Let's Encrypt DNS-01 challenge."
   type        = string
   sensitive   = true
 }

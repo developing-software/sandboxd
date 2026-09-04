@@ -61,10 +61,16 @@ in
       default = "";
       description = "ACME account email (tls = letsencrypt).";
     };
+    acmeDnsProvider = mkOption {
+      type = types.str;
+      default = "cloudflare";
+      example = "route53";
+      description = "Lego DNS-01 provider for the wildcard cert (tls = letsencrypt).";
+    };
     acmeEnvironmentFile = mkOption {
       type = types.str;
       default = "/etc/sandboxd/traefik.env";
-      description = "KEY=value file with CF_DNS_API_TOKEN (tls = letsencrypt).";
+      description = "KEY=value file with that provider's credentials, e.g. CF_DNS_API_TOKEN (tls = letsencrypt).";
     };
     tunnelPort = mkOption {
       type = types.port;
@@ -148,7 +154,7 @@ in
               email = cfg.acmeEmail;
               storage = "${config.services.traefik.dataDir}/acme.json";
               dnsChallenge = {
-                provider = "cloudflare";
+                provider = cfg.acmeDnsProvider;
                 resolvers = [
                   "1.1.1.1:53"
                   "1.0.0.1:53"
