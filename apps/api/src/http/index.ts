@@ -1,4 +1,4 @@
-// apps/api/src/http/index.ts — the app, plus the two endpoints that document it.
+// The app, plus the two endpoints that document it.
 import { generateSpecs } from 'hono-openapi'
 import { createRoutes, type Deps } from './routes'
 

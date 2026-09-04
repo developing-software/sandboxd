@@ -1,9 +1,9 @@
 // SandboxDriver backed by the Docker Engine API over a unix socket.
 // PTY attach = `exec` with Tty:true, hijacked on a raw socket (fetch can't do upgrades).
 import type { Socket } from 'bun'
-import type { Size } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 import type { CreateOpts, Duplex, Managed, PtyStream, SandboxDriver } from './driver'
-import { concat, findCRLF2 } from '@sandboxd/core/bytes'
+import { Bytes } from '@sandboxd/core/bytes'
 
 interface Created {
   Id: string
@@ -21,10 +21,14 @@ interface NetworkSummary {
   Labels?: Record<string, string>
 }
 
-const MANAGED = 'sandboxd.managed'
-const SID = 'sandboxd.sid'
-const HOST = 'sandboxd.host'
-const ROLE = 'sandboxd.role'
+/** Every container and network carries these; anything created without them is invisible
+ *  to the orphan sweep on start. */
+const LABEL = {
+  managed: 'sandboxd.managed',
+  sid: 'sandboxd.sid',
+  host: 'sandboxd.host',
+  role: 'sandboxd.role',
+} as const
 
 export class DockerDriver implements SandboxDriver {
   /** `owner` scopes create/list/cleanup to this agent identity, so several agents
@@ -53,16 +57,18 @@ export class DockerDriver implements SandboxDriver {
 
   private labels(sid: string, role?: string): Record<string, string> {
     return {
-      [MANAGED]: '1',
-      [SID]: sid,
-      [HOST]: this.owner,
-      ...(role ? { [ROLE]: role } : {}),
+      [LABEL.managed]: '1',
+      [LABEL.sid]: sid,
+      [LABEL.host]: this.owner,
+      ...(role ? { [LABEL.role]: role } : {}),
     }
   }
 
   private filters(extra: string[] = []) {
     return encodeURIComponent(
-      JSON.stringify({ label: [`${MANAGED}=1`, `${HOST}=${this.owner}`, ...extra] }),
+      JSON.stringify({
+        label: [`${LABEL.managed}=1`, `${LABEL.host}=${this.owner}`, ...extra],
+      }),
     )
   }
 
@@ -111,7 +117,7 @@ export class DockerDriver implements SandboxDriver {
     id: string,
     cmd: string[],
     env: Record<string, string>,
-    size: Size,
+    size: Msg.Size,
   ): Promise<PtyStream> {
     const exec = await this.api<Created>('POST', `/containers/${id}/exec`, {
       AttachStdin: true,
@@ -155,8 +161,8 @@ export class DockerDriver implements SandboxDriver {
         data(s, incoming) {
           let chunk: Uint8Array = incoming
           if (!headerDone) {
-            pending = concat([pending, chunk])
-            const idx = findCRLF2(pending)
+            pending = Bytes.concat([pending, chunk])
+            const idx = Bytes.crlf2(pending)
             if (idx < 0) return
             const head = new TextDecoder().decode(pending.subarray(0, idx))
             if (!/^HTTP\/1\.1 (101|200)/.test(head)) {
@@ -182,7 +188,7 @@ export class DockerDriver implements SandboxDriver {
       },
     })
     await opened.promise
-    const resize = (sz: Size) =>
+    const resize = (sz: Msg.Size) =>
       this.api('POST', `/exec/${execId}/resize?h=${sz.rows}&w=${sz.cols}`).catch(() => {})
     await resize(size)
 
@@ -277,8 +283,8 @@ export class DockerDriver implements SandboxDriver {
     const networks =
       (await this.api<NetworkSummary[]>('GET', `/networks?filters=${this.filters()}`)) ?? []
     return {
-      containers: containers.map((c) => ({ id: c.Id, sid: c.Labels?.[SID] ?? '?' })),
-      networks: networks.map((n) => ({ id: n.Id, sid: n.Labels?.[SID] ?? '?' })),
+      containers: containers.map((c) => ({ id: c.Id, sid: c.Labels?.[LABEL.sid] ?? '?' })),
+      networks: networks.map((n) => ({ id: n.Id, sid: n.Labels?.[LABEL.sid] ?? '?' })),
     }
   }
 }

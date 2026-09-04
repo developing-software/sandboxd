@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parsePresetDoc } from './schema'
 import { presetFromDoc } from './preset'
-import { Catalog, loadCatalog } from './catalog'
+import { Catalog } from './catalog'
 import type { Preset } from './types'
 
 export const PRESET_FILE = 'preset.yaml'
@@ -21,7 +21,7 @@ export function loadPresetDir(dir: string): LoadedPresets {
   const abs = resolve(dir)
   if (!existsSync(abs) || !statSync(abs).isDirectory())
     throw new Error(`presets dir not found: ${abs} (set SANDBOXD_PRESETS_DIR)`)
-  const catalog = loadCatalog(join(abs, CATALOG_FILE))
+  const catalog = Catalog.load(join(abs, CATALOG_FILE))
   const presets: Preset[] = []
   for (const entry of readdirSync(abs, { withFileTypes: true }).toSorted((a, b) =>
     a.name.localeCompare(b.name),

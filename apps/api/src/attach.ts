@@ -1,7 +1,7 @@
 // Browser <-> PTY bridge. Binary frames are raw PTY bytes both ways; the
 // browser sends {"type":"resize"} as text; we send {"type":"closed"} as text.
 import type { ServerWebSocket } from 'bun'
-import type { AttachClientMsg, AttachServerMsg } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 import type { PtyOpener } from './hosts/hub'
 import type { PtyHandle } from './hosts/conn'
 import type { Store } from './store'
@@ -16,7 +16,7 @@ export interface AttachData {
 type WS = ServerWebSocket<AttachData>
 
 const closed = (reason: string) =>
-  JSON.stringify({ type: 'closed', reason } satisfies AttachServerMsg)
+  JSON.stringify({ type: 'closed', reason } satisfies Msg.Attach.Server)
 
 export class AttachBridge {
   constructor(
@@ -61,7 +61,7 @@ export class AttachBridge {
     if (!pty) return
     if (typeof msg === 'string') {
       try {
-        const m = JSON.parse(msg) as AttachClientMsg
+        const m = JSON.parse(msg) as Msg.Attach.Client
         if (m.type === 'resize' && m.cols > 0 && m.rows > 0)
           pty.resize({ cols: m.cols | 0, rows: m.rows | 0 })
       } catch {}

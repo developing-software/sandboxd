@@ -1,7 +1,7 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
 import { hostname, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { randomBase32 } from '@sandboxd/core/ids'
+import { Id } from '@sandboxd/core/ids'
 
 export interface WorkerConfig {
   cpUrl: string // ws(s)://cp.example.com
@@ -29,7 +29,7 @@ export function loadConfig(env = process.env): WorkerConfig {
   if (existsSync(path)) {
     file = JSON.parse(readFileSync(path, 'utf8'))
   } else {
-    file = { secret: randomBase32(32) }
+    file = { secret: Id.random(32) }
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     writeFileSync(path, JSON.stringify(file, null, 2))
     chmodSync(path, 0o600)

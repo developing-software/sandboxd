@@ -9,9 +9,9 @@ import { AttachBridge, type AttachData } from './attach'
 import { PreviewProxy, type PreviewWsData } from './preview/proxy'
 import { SessionService } from './sessions'
 import { createApp } from './http/index'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('api')
+const log = Log.create('api')
 // A stray rejection in a proxy or tunnel callback must never take the control plane down.
 process.on('unhandledRejection', (e) => log.error('unhandled rejection', { err: String(e) }))
 process.on('uncaughtException', (e) =>
@@ -59,21 +59,23 @@ const server = Bun.serve<Data>({
   },
   websocket: {
     maxPayloadLength: 16 * 1024 * 1024,
+    // Narrowing `ws.data.kind` does not narrow `ws`, so each branch casts to its own side.
     open(ws: ServerWebSocket<Data>) {
-      if (ws.data.kind === 'tunnel') hub.onOpen(ws as ServerWebSocket<TunnelData>)
-      else if (ws.data.kind === 'preview')
-        ws.data.bridge.attach(ws as ServerWebSocket<PreviewWsData>)
-      else attach.onOpen(ws as ServerWebSocket<AttachData>)
+      if (ws.data.kind === 'tunnel') return hub.onOpen(ws as ServerWebSocket<TunnelData>)
+      if (ws.data.kind === 'preview')
+        return ws.data.bridge.attach(ws as ServerWebSocket<PreviewWsData>)
+      attach.onOpen(ws as ServerWebSocket<AttachData>)
     },
     message(ws: ServerWebSocket<Data>, msg) {
-      if (ws.data.kind === 'tunnel') hub.onMessage(ws as ServerWebSocket<TunnelData>, msg)
-      else if (ws.data.kind === 'preview') ws.data.bridge.onBrowserMessage(msg)
-      else attach.onMessage(ws as ServerWebSocket<AttachData>, msg)
+      if (ws.data.kind === 'tunnel')
+        return hub.onMessage(ws as ServerWebSocket<TunnelData>, msg)
+      if (ws.data.kind === 'preview') return ws.data.bridge.onBrowserMessage(msg)
+      attach.onMessage(ws as ServerWebSocket<AttachData>, msg)
     },
     close(ws: ServerWebSocket<Data>, code, reason) {
-      if (ws.data.kind === 'tunnel') hub.onClose(ws as ServerWebSocket<TunnelData>)
-      else if (ws.data.kind === 'preview') ws.data.bridge.onBrowserClose(code, reason)
-      else attach.onClose(ws as ServerWebSocket<AttachData>)
+      if (ws.data.kind === 'tunnel') return hub.onClose(ws as ServerWebSocket<TunnelData>)
+      if (ws.data.kind === 'preview') return ws.data.bridge.onBrowserClose(code, reason)
+      attach.onClose(ws as ServerWebSocket<AttachData>)
     },
   },
 })

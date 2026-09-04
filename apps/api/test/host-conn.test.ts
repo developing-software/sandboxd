@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { HostConn, type Transport } from '../src/hosts/conn'
-import { decodeFrame } from '@sandboxd/core/framing'
+import { Frame } from '@sandboxd/core/framing'
 
 class FakeTransport implements Transport {
   sent: (string | Uint8Array)[] = []
@@ -18,7 +18,9 @@ class FakeTransport implements Transport {
       .map((m) => JSON.parse(m))
   }
   get frames() {
-    return this.sent.filter((m): m is Uint8Array => typeof m !== 'string').map(decodeFrame)
+    return this.sent
+      .filter((m): m is Uint8Array => typeof m !== 'string')
+      .map((f) => Frame.decode(f))
   }
 }
 

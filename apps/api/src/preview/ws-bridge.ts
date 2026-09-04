@@ -19,9 +19,9 @@ import {
   type Upstream,
   type UpstreamResponse,
 } from './http'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('preview')
+const log = Log.create('preview')
 
 export const MAX_WS_MESSAGE = 16 * 1024 * 1024
 

@@ -1,36 +1,36 @@
 // Running sessions on this host. A session is a pod: optional private network,
 // sidecar services started first (with readiness probes), then the sandbox with
 // its PTY, ring buffer and idle timer. Everything is torn down together.
-import type { EndReason, ServiceSpec, SessionSpec, Size } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 import type { PtyStream, SandboxDriver } from './driver'
 import { PtyFanout } from './pty'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('worker.sessions')
+const log = Log.create('worker.sessions')
 
 /** The sandbox's alias on the session network, so services can reach it too. */
 const SANDBOX_ALIAS = 'sandbox'
 const READY_POLL_MS = 500
 
 interface Running {
-  spec: SessionSpec
+  spec: Msg.Spec
   containerId: string
   /** Sidecar container ids, in start order. */
   services: string[]
   network: string | null
   pty: PtyStream
   fanout: PtyFanout
-  size: Size
+  size: Msg.Size
   ending: boolean
 }
 
 export interface SessionEvents {
   started(sid: string): void
-  ended(sid: string, reason: EndReason, detail?: string): void
+  ended(sid: string, reason: Msg.EndReason, detail?: string): void
 }
 
 const NO_EVENTS: SessionEvents = { started() {}, ended() {} }
-const INITIAL_SIZE: Size = { cols: 120, rows: 40 }
+const INITIAL_SIZE: Msg.Size = { cols: 120, rows: 40 }
 
 export class SessionManager {
   private sessions = new Map<string, Running>()
@@ -60,7 +60,7 @@ export class SessionManager {
     return this.sessions.has(sid)
   }
 
-  async create(spec: SessionSpec) {
+  async create(spec: Msg.Spec) {
     if (this.sessions.has(spec.sid)) return
     const sid = spec.sid
     const services: string[] = []
@@ -129,7 +129,7 @@ export class SessionManager {
   }
 
   /** Poll `dial` until the service accepts a TCP connection, or throw after its timeout. */
-  private async waitReady(id: string, svc: ServiceSpec) {
+  private async waitReady(id: string, svc: Msg.Service) {
     const { port, timeout_s } = svc.ready!
     const deadline = Date.now() + timeout_s * 1000
     let lastErr = ''
@@ -169,7 +169,7 @@ export class SessionManager {
 
   attachViewer(
     sid: string,
-    size: Size,
+    size: Msg.Size,
     sub: (d: Uint8Array) => void,
   ): { replay: Uint8Array; unsubscribe: () => void } | null {
     const run = this.sessions.get(sid)
@@ -186,7 +186,7 @@ export class SessionManager {
     run.pty.write(data)
   }
 
-  resize(sid: string, size: Size) {
+  resize(sid: string, size: Msg.Size) {
     const run = this.sessions.get(sid)
     if (!run || (run.size.cols === size.cols && run.size.rows === size.rows)) return
     run.size = size // last resize wins
@@ -197,7 +197,7 @@ export class SessionManager {
     return this.sessions.get(sid)?.containerId
   }
 
-  async end(sid: string, reason: EndReason, detail?: string) {
+  async end(sid: string, reason: Msg.EndReason, detail?: string) {
     const run = this.sessions.get(sid)
     if (!run || run.ending) return
     run.ending = true
@@ -218,7 +218,7 @@ export class SessionManager {
     }
   }
 
-  async endAll(reason: EndReason) {
+  async endAll(reason: Msg.EndReason) {
     clearInterval(this.timer)
     await Promise.all(this.running().map((sid) => this.end(sid, reason)))
   }

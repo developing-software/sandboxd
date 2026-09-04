@@ -1,13 +1,13 @@
 // Outbound WebSocket to the CP. Reconnects with backoff. Multiplexes PTY and
 // preview-port streams over one socket using the binary framing.
-import { encodeFrame, decodeFrame } from '@sandboxd/core/framing'
-import { parseMsg, type CpMsg, type HostMsg } from '@sandboxd/core/messages'
+import { Frame } from '@sandboxd/core/framing'
+import { Msg } from '@sandboxd/core/messages'
 import type { WorkerConfig } from './config'
 import type { SandboxDriver, Duplex } from './driver'
 import type { SessionManager } from './sessions'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('worker.tunnel')
+const log = Log.create('worker.tunnel')
 
 type Stream =
   | { kind: 'pty'; sid: string; unsubscribe: () => void }
@@ -36,7 +36,7 @@ export class Tunnel {
     this.ws?.close()
   }
 
-  send(msg: HostMsg) {
+  send(msg: Msg.Host) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
   }
 
@@ -52,7 +52,7 @@ export class Tunnel {
   }
 
   private sendBinary(stream: number, data: Uint8Array) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(encodeFrame(stream, data))
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(Frame.encode(stream, data))
   }
 
   private connect() {
@@ -75,7 +75,7 @@ export class Tunnel {
       })
     }
     ws.onmessage = (ev) => {
-      if (typeof ev.data === 'string') this.onControl(parseMsg<CpMsg>(ev.data))
+      if (typeof ev.data === 'string') this.onControl(Msg.parse<Msg.Cp>(ev.data))
       else this.onBinary(new Uint8Array(ev.data as ArrayBuffer))
     }
     ws.onclose = () => {
@@ -111,7 +111,7 @@ export class Tunnel {
     }, 10_000)
   }
 
-  private onControl(msg: CpMsg) {
+  private onControl(msg: Msg.Cp) {
     switch (msg.type) {
       case 'hello.ok':
         this.hostId = msg.host_id
@@ -192,7 +192,7 @@ export class Tunnel {
   }
 
   private onBinary(buf: Uint8Array) {
-    const { stream, payload } = decodeFrame(buf)
+    const { stream, payload } = Frame.decode(buf)
     const s = this.streams.get(stream)
     if (!s) return
     if (s.kind === 'pty') this.sessions.write(s.sid, payload)

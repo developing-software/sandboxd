@@ -6,9 +6,10 @@
 // keys that would change what runs on the host are refused (decision 21).
 // Pure: no filesystem, no docker.
 import type { ServiceDecl } from './store'
-import { badRequest } from '@sandboxd/core/errors'
-import { validateEnv } from './env'
-import { noServices, validateName, validateReady, type ValidatedServices } from './services'
+import { Err } from '@sandboxd/core/errors'
+import { Json } from '@sandboxd/core/json'
+import { Env } from './env'
+import { Service } from './services'
 
 /** Keys the translation acts on. */
 const HANDLED = new Set([
@@ -112,70 +113,126 @@ const REJECTED = new Set([
 ])
 const X_KEYS = new Set(['ready', 'sandbox_env', 'secret_env'])
 
-/** Translate a compose document (YAML text or a parsed object) into sidecar services, in start order. */
-export function parseCompose(input: unknown, at = 'compose'): ValidatedServices {
-  if (input === undefined || input === null) return noServices()
-  let doc: unknown = input
-  if (typeof input === 'string') {
-    if (!input.trim()) return noServices()
-    try {
-      doc = Bun.YAML.parse(input)
-    } catch (e) {
-      throw badRequest(`${at}: invalid YAML: ${(e as Error).message}`)
+export namespace Compose {
+  /** Translate a compose document (YAML text or a parsed object) into sidecar services, in start order. */
+  export const parse = (input: unknown, at = 'compose'): Service.List => {
+    if (input === undefined || input === null) return Service.none()
+    let doc: unknown = input
+    if (typeof input === 'string') {
+      if (!input.trim()) return Service.none()
+      try {
+        doc = Bun.YAML.parse(input)
+      } catch (e) {
+        throw Err.badRequest(`${at}: invalid YAML: ${(e as Error).message}`)
+      }
     }
-  }
-  if (!isObj(doc)) throw badRequest(`${at} must be a compose document (YAML text or object)`)
-  const services = doc.services
-  if (services === undefined || services === null) return noServices()
-  if (!isObj(services)) throw badRequest(`${at}.services must be a map`)
+    if (!Json.isObj(doc))
+      throw Err.badRequest(`${at} must be a compose document (YAML text or object)`)
+    const services = doc.services
+    if (services === undefined || services === null) return Service.none()
+    if (!Json.isObj(services)) throw Err.badRequest(`${at}.services must be a map`)
 
-  const out = noServices()
-  const deps = new Map<string, string[]>()
-  for (const [key, raw] of Object.entries(services)) {
-    const sat = `${at}.services.${key}`
-    if (!isObj(raw)) throw badRequest(`${sat} must be a map`)
-    if (raw.build !== undefined && raw.image === undefined) continue // the repo's own app: that is what the sandbox runs
-    const name = validateName(sat, key)
-    for (const k of Object.keys(raw)) {
-      if (HANDLED.has(k) || IGNORED.has(k) || k.startsWith('x-')) continue
-      throw badRequest(
-        `${sat}.${k} is not supported${REJECTED.has(k) ? '' : ' (unknown key)'}`,
-      )
-    }
-    if (typeof raw.image !== 'string' || !raw.image.trim())
-      throw badRequest(`${sat}.image is required`)
-    const x = raw['x-sandboxd'] === undefined ? {} : raw['x-sandboxd']
-    if (!isObj(x)) throw badRequest(`${sat}.x-sandboxd must be a map`)
-    for (const k of Object.keys(x))
-      if (!X_KEYS.has(k)) throw badRequest(`${sat}.x-sandboxd.${k} is not supported`)
+    const out = Service.none()
+    const deps = new Map<string, string[]>()
+    for (const [key, raw] of Object.entries(services)) {
+      const sat = `${at}.services.${key}`
+      if (!Json.isObj(raw)) throw Err.badRequest(`${sat} must be a map`)
+      if (raw.build !== undefined && raw.image === undefined) continue // the repo's own app: that is what the sandbox runs
+      const name = Service.name(sat, key)
+      for (const k of Object.keys(raw)) {
+        if (HANDLED.has(k) || IGNORED.has(k) || k.startsWith('x-')) continue
+        throw Err.badRequest(
+          `${sat}.${k} is not supported${REJECTED.has(k) ? '' : ' (unknown key)'}`,
+        )
+      }
+      if (typeof raw.image !== 'string' || !raw.image.trim())
+        throw Err.badRequest(`${sat}.image is required`)
+      const x = raw['x-sandboxd'] === undefined ? {} : raw['x-sandboxd']
+      if (!Json.isObj(x)) throw Err.badRequest(`${sat}.x-sandboxd must be a map`)
+      for (const k of Object.keys(x))
+        if (!X_KEYS.has(k)) throw Err.badRequest(`${sat}.x-sandboxd.${k} is not supported`)
 
-    const decl: ServiceDecl = {
-      name,
-      image: interpolate(raw.image.trim(), `${sat}.image`),
-      env: validateEnv(
-        `${sat}.environment`,
-        environment(raw.environment, `${sat}.environment`),
-      ),
-      cmd: command(raw.command, `${sat}.command`),
-      ready:
-        x.ready !== undefined
-          ? validateReady(`${sat}.x-sandboxd`, x.ready)
-          : readyFromPorts(raw, sat),
+      const decl: ServiceDecl = {
+        name,
+        image: interpolate(raw.image.trim(), `${sat}.image`),
+        env: Env.validate(
+          `${sat}.environment`,
+          environment(raw.environment, `${sat}.environment`),
+        ),
+        cmd: command(raw.command, `${sat}.command`),
+        ready:
+          x.ready !== undefined
+            ? Service.ready(`${sat}.x-sandboxd`, x.ready)
+            : readyFromPorts(raw, sat),
+      }
+      if (out.decls.some((d) => d.name === name)) throw Err.badRequest(`${sat}: duplicated`)
+      out.decls.push(decl)
+      const secret = Env.validate(`${sat}.x-sandboxd.secret_env`, x.secret_env)
+      if (Object.keys(secret).length) out.secrets[name] = secret
+      const sandbox = Env.validate(`${sat}.x-sandboxd.sandbox_env`, x.sandbox_env)
+      if (Object.keys(sandbox).length) out.sandbox_env[name] = sandbox
+      deps.set(name, dependsOn(raw.depends_on, `${sat}.depends_on`))
     }
-    if (out.decls.some((d) => d.name === name)) throw badRequest(`${sat}: duplicated`)
-    out.decls.push(decl)
-    const secret = validateEnv(`${sat}.x-sandboxd.secret_env`, x.secret_env)
-    if (Object.keys(secret).length) out.secrets[name] = secret
-    const sandbox = validateEnv(`${sat}.x-sandboxd.sandbox_env`, x.sandbox_env)
-    if (Object.keys(sandbox).length) out.sandbox_env[name] = sandbox
-    deps.set(name, dependsOn(raw.depends_on, `${sat}.depends_on`))
+    out.decls = startOrder(out.decls, deps, at)
+    return out
   }
-  out.decls = startOrder(out.decls, deps, at)
-  return out
+
+  /** Variable interpolation against an empty environment: `${X:-d}` → d, `${X}` → "", `$$` → `$`, `${X:?msg}` → 400. */
+  export const interpolate = (s: string, at: string): string => {
+    if (!s.includes('$')) return s
+    return s.replace(
+      /\$(?:(\$)|\{([^}]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+      (m, dollar, braced, bare) => {
+        if (dollar) return '$'
+        if (bare !== undefined) return ''
+        const b = braced as string
+        const op = /^([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-+?])([\s\S]*))?$/.exec(b)
+        if (!op) throw Err.badRequest(`${at}: bad substitution "${m}"`)
+        const [, name, kind, arg = ''] = op
+        switch (kind) {
+          case undefined:
+            return ''
+          case '-':
+          case ':-':
+            return arg
+          case '+':
+          case ':+':
+            return ''
+          default:
+            throw Err.badRequest(
+              `${at}: ${arg || `variable ${name} is required`} (set it with \${${name}:-default} — the control plane has no environment to read it from)`,
+            )
+        }
+      },
+    )
+  }
+
+  /** Shell-style word splitting for `command: "redis-server --appendonly yes"`. */
+  export const split = (s: string): string[] => {
+    const out: string[] = []
+    let cur = '',
+      quote: string | null = null,
+      has = false
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i]!
+      if (quote) {
+        if (c === quote) quote = null
+        else if (c === '\\' && quote === '"' && i + 1 < s.length) cur += s[++i]
+        else cur += c
+      } else if (c === '"' || c === "'") {
+        quote = c
+        has = true
+      } else if (c === '\\' && i + 1 < s.length) cur += s[++i]
+      else if (/\s/.test(c)) {
+        if (cur || has) out.push(cur)
+        cur = ''
+        has = false
+      } else cur += c
+    }
+    if (cur || has) out.push(cur)
+    return out
+  }
 }
-
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === 'object' && !Array.isArray(v)
 
 /** `environment` as a map (scalars stringified, null dropped) or a `KEY=value` list. */
 function environment(raw: unknown, at: string): Record<string, string> {
@@ -183,21 +240,22 @@ function environment(raw: unknown, at: string): Record<string, string> {
   if (raw === undefined || raw === null) return out
   if (Array.isArray(raw)) {
     for (const item of raw) {
-      if (typeof item !== 'string') throw badRequest(`${at} entries must be KEY=value strings`)
+      if (typeof item !== 'string')
+        throw Err.badRequest(`${at} entries must be KEY=value strings`)
       const i = item.indexOf('=')
       if (i < 0) {
         out[item] = ''
         continue
       } // bare KEY takes the value from the host shell in compose; there is none here
-      out[item.slice(0, i)] = interpolate(item.slice(i + 1), at)
+      out[item.slice(0, i)] = Compose.interpolate(item.slice(i + 1), at)
     }
     return out
   }
-  if (!isObj(raw)) throw badRequest(`${at} must be a map or a list`)
+  if (!Json.isObj(raw)) throw Err.badRequest(`${at} must be a map or a list`)
   for (const [k, v] of Object.entries(raw)) {
     if (v === null || v === undefined) continue
-    if (typeof v === 'object') throw badRequest(`${at}.${k} must be a scalar`)
-    out[k] = interpolate(String(v), `${at}.${k}`)
+    if (typeof v === 'object') throw Err.badRequest(`${at}.${k} must be a scalar`)
+    out[k] = Compose.interpolate(String(v), `${at}.${k}`)
   }
   return out
 }
@@ -205,7 +263,7 @@ function environment(raw: unknown, at: string): Record<string, string> {
 function command(raw: unknown, at: string): string[] | null {
   if (raw === undefined || raw === null) return null
   if (typeof raw === 'string') {
-    const words = splitWords(interpolate(raw, at))
+    const words = Compose.split(Compose.interpolate(raw, at))
     return words.length ? words : null
   }
   if (
@@ -213,8 +271,8 @@ function command(raw: unknown, at: string): string[] | null {
     raw.length &&
     raw.every((c) => typeof c === 'string' || typeof c === 'number')
   )
-    return raw.map((c) => interpolate(String(c), at))
-  throw badRequest(`${at} must be a string or a list of strings`)
+    return raw.map((c) => Compose.interpolate(String(c), at))
+  throw Err.badRequest(`${at} must be a string or a list of strings`)
 }
 
 /** Readiness port when `x-sandboxd.ready` is absent: first `expose` entry, else the container side of the first `ports` entry. */
@@ -223,11 +281,11 @@ function readyFromPorts(raw: Record<string, unknown>, at: string): ServiceDecl['
   if (expose !== undefined) {
     const p = containerPort(String(expose))
     if (p) return { port: p, timeout_s: 60 }
-    throw badRequest(`${at}.expose: cannot read a port from "${expose}"`)
+    throw Err.badRequest(`${at}.expose: cannot read a port from "${expose}"`)
   }
   const port = Array.isArray(raw.ports) ? raw.ports[0] : undefined
   if (port === undefined) return null
-  const p = isObj(port)
+  const p = Json.isObj(port)
     ? containerPort(String(port.target ?? ''), String(port.protocol ?? 'tcp'))
     : containerPort(String(port))
   return p ? { port: p, timeout_s: 60 } : null
@@ -247,11 +305,11 @@ function dependsOn(raw: unknown, at: string): string[] {
   if (raw === undefined || raw === null) return []
   if (Array.isArray(raw)) {
     if (!raw.every((d) => typeof d === 'string'))
-      throw badRequest(`${at} entries must be service names`)
+      throw Err.badRequest(`${at} entries must be service names`)
     return raw as string[]
   }
-  if (isObj(raw)) return Object.keys(raw)
-  throw badRequest(`${at} must be a list or a map`)
+  if (Json.isObj(raw)) return Object.keys(raw)
+  throw Err.badRequest(`${at} must be a list or a map`)
 }
 
 /** Dependencies first, otherwise file order. Dependencies on skipped (build-only) services are dropped. */
@@ -268,7 +326,9 @@ function startOrder(
     if (done.has(name)) return
     const i = stack.indexOf(name)
     if (i >= 0)
-      throw badRequest(`${at}: depends_on cycle: ${[...stack.slice(i), name].join(' -> ')}`)
+      throw Err.badRequest(
+        `${at}: depends_on cycle: ${[...stack.slice(i), name].join(' -> ')}`,
+      )
     stack.push(name)
     for (const d of deps.get(name) ?? []) if (byName.has(d)) visit(d)
     stack.pop()
@@ -276,61 +336,5 @@ function startOrder(
     out.push(byName.get(name)!)
   }
   for (const d of decls) visit(d.name)
-  return out
-}
-
-/** Compose variable interpolation against an empty environment: `${X:-d}` → d, `${X}` → "", `$$` → `$`, `${X:?msg}` → 400. */
-export function interpolate(s: string, at: string): string {
-  if (!s.includes('$')) return s
-  return s.replace(
-    /\$(?:(\$)|\{([^}]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
-    (m, dollar, braced, bare) => {
-      if (dollar) return '$'
-      if (bare !== undefined) return ''
-      const b = braced as string
-      const op = /^([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-+?])([\s\S]*))?$/.exec(b)
-      if (!op) throw badRequest(`${at}: bad substitution "${m}"`)
-      const [, name, kind, arg = ''] = op
-      switch (kind) {
-        case undefined:
-          return ''
-        case '-':
-        case ':-':
-          return arg
-        case '+':
-        case ':+':
-          return ''
-        default:
-          throw badRequest(
-            `${at}: ${arg || `variable ${name} is required`} (set it with \${${name}:-default} — the control plane has no environment to read it from)`,
-          )
-      }
-    },
-  )
-}
-
-/** Shell-style word splitting for `command: "redis-server --appendonly yes"`. */
-export function splitWords(s: string): string[] {
-  const out: string[] = []
-  let cur = '',
-    quote: string | null = null,
-    has = false
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i]!
-    if (quote) {
-      if (c === quote) quote = null
-      else if (c === '\\' && quote === '"' && i + 1 < s.length) cur += s[++i]
-      else cur += c
-    } else if (c === '"' || c === "'") {
-      quote = c
-      has = true
-    } else if (c === '\\' && i + 1 < s.length) cur += s[++i]
-    else if (/\s/.test(c)) {
-      if (cur || has) out.push(cur)
-      cur = ''
-      has = false
-    } else cur += c
-  }
-  if (cur || has) out.push(cur)
   return out
 }

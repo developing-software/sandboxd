@@ -1,6 +1,6 @@
 // A preset turns a friendly request shape into the generic {image, cmd, env, secret_env, services}
 // the core understands. Presets are data (presets/<name>/preset.yaml); this is their runtime shape.
-import type { ComposeServices } from '../services'
+import type { Service } from '../services'
 
 /** What a preset implies. image/cmd/idle_timeout_s are defaults the caller may override. */
 export interface Expanded {
@@ -10,7 +10,7 @@ export interface Expanded {
   cmd?: string[]
   idle_timeout_s?: number
   /** Sidecars the preset brings by default (catalog references in preset.yaml), as compose services. */
-  services?: ComposeServices
+  services?: Service.Map
 }
 
 /** The untyped request body. Each preset validates the fields it cares about. */

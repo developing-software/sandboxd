@@ -1,10 +1,10 @@
 // Host admin use cases behind the HTTP API: list, approve, revoke.
 import type { Store } from '../store'
 import type { HostPresence } from './hub'
-import { badRequest, conflict, notFound } from '@sandboxd/core/errors'
-import { logger } from '@sandboxd/core/log'
+import { Err } from '@sandboxd/core/errors'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('hosts')
+const log = Log.create('hosts')
 
 export class HostService {
   constructor(
@@ -27,17 +27,17 @@ export class HostService {
 
   approve(id: string, code: string | undefined) {
     const host = this.store.hostById(id)
-    if (!host) throw notFound('host')
-    if (host.status !== 'pending') throw conflict(`host is ${host.status}`)
+    if (!host) throw Err.notFound('host')
+    if (host.status !== 'pending') throw Err.conflict(`host is ${host.status}`)
     if (!code || code.toUpperCase() !== host.approve_code)
-      throw badRequest('approval code does not match')
+      throw Err.badRequest('approval code does not match')
     this.store.approveHost(host.id)
     log.info('host approved', { hostId: host.id, name: host.name })
     this.hub.notifyApproved(host.id)
   }
 
   revoke(id: string) {
-    if (!this.store.hostById(id)) throw notFound('host')
+    if (!this.store.hostById(id)) throw Err.notFound('host')
     this.store.revokeHost(id)
   }
 }

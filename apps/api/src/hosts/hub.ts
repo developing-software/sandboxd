@@ -2,17 +2,10 @@
 // enrollment on `hello`, and hands stream traffic to the right HostConn.
 // Consumers depend on the narrow interfaces below, not on the class.
 import type { ServerWebSocket } from 'bun'
-import { decodeFrame } from '@sandboxd/core/framing'
-import {
-  parseMsg,
-  type CpMsg,
-  type EndReason,
-  type HostMsg,
-  type SessionSpec,
-  type Size,
-} from '@sandboxd/core/messages'
+import { Frame } from '@sandboxd/core/framing'
+import { Msg } from '@sandboxd/core/messages'
 import type { Store } from '../store'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 import {
   HostConn,
   type Capacity,
@@ -22,7 +15,7 @@ import {
 } from './conn'
 import { enroll } from './enrollment'
 
-const log = logger('hub')
+const log = Log.create('hub')
 
 export interface TunnelData {
   kind: 'tunnel'
@@ -34,14 +27,14 @@ export interface HubEvents {
   hostOnline(hostId: string, running: string[]): void
   heartbeat(hostId: string): void
   sessionStarted(sid: string): void
-  sessionEnded(sid: string, reason: EndReason, detail?: string): void
+  sessionEnded(sid: string, reason: Msg.EndReason, detail?: string): void
 }
 
 /** What the scheduler needs from the hub. */
 export interface HostPlacement {
   isOnline(hostId: string): boolean
   capacity(hostId: string): Capacity | null
-  createSession(hostId: string, spec: SessionSpec): boolean
+  createSession(hostId: string, spec: Msg.Spec): boolean
   destroySession(hostId: string, sid: string): void
 }
 
@@ -58,7 +51,7 @@ export interface PortDialer {
 
 /** What the attach bridge needs from the hub. */
 export interface PtyOpener {
-  openPty(hostId: string, sid: string, size: Size, sub: StreamSub): PtyHandle | null
+  openPty(hostId: string, sid: string, size: Msg.Size, sub: StreamSub): PtyHandle | null
 }
 
 /** What the host admin API needs from the hub. */
@@ -105,7 +98,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
 
   onMessage(ws: WS, raw: string | Buffer) {
     if (typeof raw === 'string') {
-      const msg = parseMsg<HostMsg>(raw)
+      const msg = Msg.parse<Msg.Host>(raw)
       if (msg.type === 'hello') return this.onHello(ws, msg)
       const c = this.connOf(ws)
       if (c) this.onControl(c, msg) // else: not approved / not hello'd yet
@@ -113,7 +106,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
     }
     const c = this.connOf(ws)
     if (!c) return
-    const { stream, payload } = decodeFrame(new Uint8Array(raw))
+    const { stream, payload } = Frame.decode(new Uint8Array(raw))
     c.onFrame(stream, payload)
   }
 
@@ -137,14 +130,14 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
   }
 
   // ---- enrollment ----
-  private onHello(ws: WS, hello: Extract<HostMsg, { type: 'hello' }>) {
+  private onHello(ws: WS, hello: Extract<Msg.Host, { type: 'hello' }>) {
     const e = enroll(this.store, hello, this.joinToken)
     const { id: hostId, name } = e.host
     ws.data.hostId = hostId
     switch (e.kind) {
       case 'rejected':
         log.warn('revoked host tried to connect', { hostId, name })
-        ws.send(JSON.stringify({ type: 'hello.rejected', reason: e.reason } satisfies CpMsg))
+        ws.send(JSON.stringify({ type: 'hello.rejected', reason: e.reason } satisfies Msg.Cp))
         ws.close()
         return
       case 'pending':
@@ -161,7 +154,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
             type: 'hello.pending',
             host_id: hostId,
             code: e.code,
-          } satisfies CpMsg),
+          } satisfies Msg.Cp),
         )
         return
       case 'accepted':
@@ -193,7 +186,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
   }
 
   // ---- control from an accepted host ----
-  private onControl(c: HostConn, msg: HostMsg) {
+  private onControl(c: HostConn, msg: Msg.Host) {
     switch (msg.type) {
       case 'heartbeat':
         c.running = msg.running
@@ -215,7 +208,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
   }
 
   // ---- commands to hosts ----
-  createSession(hostId: string, spec: SessionSpec): boolean {
+  createSession(hostId: string, spec: Msg.Spec): boolean {
     const c = this.conns.get(hostId)
     if (!c) return false
     c.createSession(spec)
@@ -226,7 +219,7 @@ export class HostHub implements HostPlacement, PortDialer, PtyOpener, HostPresen
     this.conns.get(hostId)?.destroySession(sid)
   }
 
-  openPty(hostId: string, sid: string, size: Size, sub: StreamSub): PtyHandle | null {
+  openPty(hostId: string, sid: string, size: Msg.Size, sub: StreamSub): PtyHandle | null {
     return this.conns.get(hostId)?.openPty(sid, size, sub) ?? null
   }
 

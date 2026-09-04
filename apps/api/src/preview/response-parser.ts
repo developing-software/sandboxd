@@ -1,5 +1,5 @@
 // Incremental HTTP/1.1 response parser: head, then body (chunked, length-delimited, or until close).
-import { concat, findCRLF, findCRLF2 } from '@sandboxd/core/bytes'
+import { Bytes } from '@sandboxd/core/bytes'
 
 export type ParseEvent =
   | { kind: 'head'; status: number; headers: Headers }
@@ -14,11 +14,11 @@ export class ResponseParser {
   private chunkState: 'size' | 'data' | 'crlf' | 'done' = 'size'
 
   feed(data: Uint8Array): ParseEvent[] {
-    this.buf = this.buf.length ? concat([this.buf, data]) : data
+    this.buf = this.buf.length ? Bytes.concat([this.buf, data]) : data
     const events: ParseEvent[] = []
 
     if (!this.headDone) {
-      const idx = findCRLF2(this.buf)
+      const idx = Bytes.crlf2(this.buf)
       if (idx < 0) return events
       const head = new TextDecoder().decode(this.buf.subarray(0, idx))
       this.buf = this.buf.subarray(idx + 4)
@@ -64,7 +64,7 @@ export class ResponseParser {
     // chunked
     while (true) {
       if (this.chunkState === 'size') {
-        const i = findCRLF(this.buf)
+        const i = Bytes.crlf(this.buf)
         if (i < 0) break
         const size = parseInt(
           new TextDecoder().decode(this.buf.subarray(0, i)).split(';')[0]!.trim(),

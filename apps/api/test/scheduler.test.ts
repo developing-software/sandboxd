@@ -2,11 +2,11 @@ import { expect, test } from 'bun:test'
 import { Store } from '../src/store'
 import { Scheduler } from '../src/scheduler'
 import type { HostPlacement } from '../src/hosts/hub'
-import type { SessionSpec } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 
 class FakeHub implements HostPlacement {
   caps = new Map<string, { running: number; max: number }>()
-  created: { hostId: string; spec: SessionSpec }[] = []
+  created: { hostId: string; spec: Msg.Spec }[] = []
   destroyed: string[] = []
   isOnline(id: string) {
     return this.caps.has(id)
@@ -14,7 +14,7 @@ class FakeHub implements HostPlacement {
   capacity(id: string) {
     return this.caps.get(id) ?? null
   }
-  createSession(hostId: string, spec: SessionSpec) {
+  createSession(hostId: string, spec: Msg.Spec) {
     const c = this.caps.get(hostId)
     if (!c) return false
     c.running += 1

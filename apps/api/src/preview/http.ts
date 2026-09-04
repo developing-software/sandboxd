@@ -2,7 +2,7 @@
 // request (HTTP/1.1, Connection: close), response body streamed back.
 import type { PortHandle } from '../hosts/conn'
 import { ResponseParser } from './response-parser'
-import { concat } from '@sandboxd/core/bytes'
+import { Bytes } from '@sandboxd/core/bytes'
 
 export type Upstream = PortHandle
 export type Dial = (sub: { onData(d: Uint8Array): void; onClose(): void }) => Promise<Upstream>
@@ -101,7 +101,7 @@ export async function proxyOnce(req: Request, port: number, dial: Dial): Promise
     'connection: close',
     ...(body ? [`content-length: ${body.length}`] : []),
   ])
-  const out = body ? concat([head, body]) : head
+  const out = body ? Bytes.concat([head, body]) : head
 
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
   let finished = false

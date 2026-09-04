@@ -5,14 +5,14 @@ import { Hono } from 'hono'
 import { hc } from 'hono/client'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { Routes } from '@sandboxd/api/http/routes'
-import { HttpError, badRequest } from '@sandboxd/core/errors'
-import { logger } from '@sandboxd/core/log'
+import { Err } from '@sandboxd/core/errors'
+import { Log } from '@sandboxd/core/log'
 import type { UiConfig } from './config'
 import type { PresetRegistry } from './presets/index'
 import type { Catalog } from './presets/catalog'
 import { buildCreate } from './sessions'
 
-const log = logger('ui')
+const log = Log.create('ui')
 
 export interface AppDeps {
   cfg: Pick<UiConfig, 'apiUrl' | 'serviceToken' | 'defaultImage'>
@@ -31,7 +31,7 @@ export function createApp(d: AppDeps) {
   // every save). Name it, so the page says so instead of "internal error".
   const down = (e: unknown) => {
     log.warn('api unreachable', { url: d.cfg.apiUrl, err: String(e) })
-    return new HttpError(502, `api unreachable at ${d.cfg.apiUrl}`)
+    return new Err.Http(502, `api unreachable at ${d.cfg.apiUrl}`)
   }
 
   return new Hono({ strict: false })
@@ -40,7 +40,7 @@ export function createApp(d: AppDeps) {
     .get('/services', (c) => c.json(d.catalog.list()))
     .post('/sessions', async (c) => {
       const raw: unknown = await c.req.json().catch(() => {
-        throw badRequest('invalid JSON body')
+        throw Err.badRequest('invalid JSON body')
       })
       const json = buildCreate(
         { defaultImage: d.cfg.defaultImage, presets: d.presets, catalog: d.catalog },
@@ -65,7 +65,7 @@ export function createApp(d: AppDeps) {
       return relay(res)
     })
     .onError((err, c) => {
-      if (err instanceof HttpError)
+      if (err instanceof Err.Http)
         return c.json({ error: err.message }, err.status as ContentfulStatusCode)
       log.error('unhandled', { err: String(err), stack: err.stack })
       return c.json({ error: 'internal error' }, 500)

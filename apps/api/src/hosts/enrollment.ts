@@ -3,11 +3,11 @@
 // A matching join token approves on the spot; a wrong one is not a rejection, the daemon
 // simply falls back to the printed code (and the hub logs it).
 import { timingSafeEqual } from 'node:crypto'
-import type { HostMsg } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 import type { HostRow, Store } from '../store'
-import { newApproveCode, newHostId } from '@sandboxd/core/ids'
+import { Id } from '@sandboxd/core/ids'
 
-export type Hello = Extract<HostMsg, { type: 'hello' }>
+export type Hello = Extract<Msg.Host, { type: 'hello' }>
 
 export type Enrollment =
   | { kind: 'accepted'; host: HostRow; joined: boolean }
@@ -24,10 +24,10 @@ export function enroll(
   const isNew = !host
   if (!host) {
     host = store.insertPendingHost({
-      id: newHostId(),
+      id: Id.host(),
       name: hello.name,
       fingerprint: hello.fingerprint,
-      approve_code: newApproveCode(),
+      approve_code: Id.code(),
       max_sessions: hello.max_sessions,
     })
   }

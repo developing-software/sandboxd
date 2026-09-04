@@ -1,10 +1,10 @@
 // The sandbox driver contract (design decision 14). Only `docker.ts` implements
 // it in v1; Podman/Firecracker would live beside it and plug in at agent/main.ts.
-import type { Size } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 
 export interface PtyStream {
   write(data: Uint8Array | string): void
-  resize(size: Size): Promise<void>
+  resize(size: Msg.Size): Promise<void>
   close(): void
   onData(cb: (data: Uint8Array) => void): void
   onExit(cb: () => void): void
@@ -44,7 +44,7 @@ export interface SandboxDriver {
     id: string,
     cmd: string[],
     env: Record<string, string>,
-    size: Size,
+    size: Msg.Size,
   ): Promise<PtyStream>
   /** TCP connection to `port` inside a container (preview proxy, readiness probes). Rejects when refused. */
   dial(id: string, port: number): Promise<Duplex>

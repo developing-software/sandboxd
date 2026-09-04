@@ -4,9 +4,9 @@ import { Scheduler } from '../src/scheduler'
 import { Tokens } from '../src/tokens'
 import { SessionService } from '../src/sessions'
 import { CreateSession } from '../src/schema'
-import { validateEnv } from '../src/env'
+import { Env } from '../src/env'
 import type { HostPlacement } from '../src/hosts/hub'
-import type { SessionSpec } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 
 class NoHosts implements HostPlacement {
   isOnline() {
@@ -15,7 +15,7 @@ class NoHosts implements HostPlacement {
   capacity() {
     return null
   }
-  createSession(_h: string, _s: SessionSpec) {
+  createSession(_h: string, _s: Msg.Spec) {
     return false
   }
   destroySession() {}
@@ -71,13 +71,13 @@ test('ownership: another owner sees 404; cancel and tokens', () => {
   expect(svc.list('you')).toHaveLength(0)
 })
 
-test('validateEnv: names, reserved keys, types', () => {
-  expect(validateEnv('env', undefined)).toEqual({})
-  expect(validateEnv('env', { A_1: 'x' })).toEqual({ A_1: 'x' })
-  expect(() => validateEnv('env', { 'bad-name': 'x' })).toThrow(/invalid variable name/)
-  expect(() => validateEnv('env', { TERM: 'x' })).toThrow(/reserved/)
-  expect(() => validateEnv('env', { A: 1 })).toThrow(/must be a string/)
-  expect(() => validateEnv('env', ['A'])).toThrow(/object/)
+test('Env.validate: names, reserved keys, types', () => {
+  expect(Env.validate('env', undefined)).toEqual({})
+  expect(Env.validate('env', { A_1: 'x' })).toEqual({ A_1: 'x' })
+  expect(() => Env.validate('env', { 'bad-name': 'x' })).toThrow(/invalid variable name/)
+  expect(() => Env.validate('env', { TERM: 'x' })).toThrow(/reserved/)
+  expect(() => Env.validate('env', { A: 1 })).toThrow(/must be a string/)
+  expect(() => Env.validate('env', ['A'])).toThrow(/object/)
 })
 
 test('services: declarations split into the stored half and the secret half; compose merges after', () => {

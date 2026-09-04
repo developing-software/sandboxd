@@ -1,6 +1,7 @@
 // Control-plane config. The API is generic: it knows images, commands and env, never
 // presets. Those live in apps/ui.
-export type Env = Record<string, string | undefined>
+/** A process environment. Named `Vars` so it does not collide with the `Env` namespace. */
+export type Vars = Record<string, string | undefined>
 
 export interface CpConfig {
   port: number
@@ -22,7 +23,7 @@ export interface CpConfig {
 
 const SANDBOX_ENV_PREFIX = 'SANDBOXD_SANDBOX_ENV_'
 
-export function loadConfig(env: Env = process.env): CpConfig {
+export function loadConfig(env: Vars = process.env): CpConfig {
   let serviceToken = env.SANDBOXD_SERVICE_TOKEN
   if (!serviceToken) {
     serviceToken = 'dev-token'

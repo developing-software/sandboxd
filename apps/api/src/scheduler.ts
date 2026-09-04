@@ -1,11 +1,11 @@
 // Placement + FIFO queue + reconciliation. Secrets for queued sessions live
 // only here, in memory; they are never written to the store.
-import type { EndReason, ServiceSpec, SessionSpec } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 import type { Store, Session } from './store'
 import type { HostPlacement, HubEvents } from './hosts/hub'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('sched')
+const log = Log.create('sched')
 const UNKNOWN_GRACE_MS = 90_000
 
 /** Secrets held in memory for a queued session, keyed by service name for sidecars. */
@@ -100,12 +100,12 @@ export class Scheduler implements HubEvents {
     for (const k of Object.keys(s.env)) delete secret_env[k]
     const held = this.secrets.get(s.id)
     Object.assign(secret_env, held?.env ?? {})
-    const services: ServiceSpec[] = s.services.map((d) => ({
+    const services: Msg.Service[] = s.services.map((d) => ({
       ...d,
       env: { ...d.env },
       secret_env: { ...held?.services[d.name] },
     }))
-    const spec: SessionSpec = {
+    const spec: Msg.Spec = {
       sid: s.id,
       image: s.image,
       cmd: s.cmd,
@@ -147,7 +147,7 @@ export class Scheduler implements HubEvents {
   sessionStarted(sid: string) {
     this.store.markRunning(sid)
   }
-  sessionEnded(sid: string, reason: EndReason, detail?: string) {
+  sessionEnded(sid: string, reason: Msg.EndReason, detail?: string) {
     this.secrets.delete(sid)
     this.store.markEnded(sid, reason, detail)
     this.drain()

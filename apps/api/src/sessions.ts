@@ -5,10 +5,10 @@ import type { CpConfig } from './config'
 import type { Store, Session } from './store'
 import type { Scheduler } from './scheduler'
 import type { Tokens } from './tokens'
-import { badRequest, conflict, notFound } from '@sandboxd/core/errors'
-import { newSessionId } from '@sandboxd/core/ids'
-import { fromDecls, mergeServices, sandboxEnvOf } from './services'
-import { parseCompose } from './compose'
+import { Err } from '@sandboxd/core/errors'
+import { Id } from '@sandboxd/core/ids'
+import { Service } from './services'
+import { Compose } from './compose'
 import { DEFAULT_IDLE_S, type CreateSession, type SessionView } from './schema'
 
 const ATTACH_TTL_MS = 60_000
@@ -28,14 +28,14 @@ export class SessionService {
   ) {}
 
   create(b: CreateSession): SessionView {
-    const id = newSessionId()
+    const id = Id.session()
     // Sidecars from both sources, in start order: the caller's list, then its compose file.
-    const services = mergeServices(
-      [fromDecls(b.services ?? []), parseCompose(b.compose)],
+    const services = Service.merge(
+      [Service.from(b.services ?? []), Compose.parse(b.compose)],
       this.cfg.maxServices,
     )
     // Precedence: caller env > what services ask to inject (DATABASE_URL and friends).
-    const env = { ...sandboxEnvOf(services), ...b.env }
+    const env = { ...Service.sandboxEnv(services), ...b.env }
     const row = this.store.insertSession({
       id,
       owner_id: b.owner_id,
@@ -66,7 +66,7 @@ export class SessionService {
 
   attachToken(sid: string, owner_id: string) {
     const s = this.owned(sid, owner_id)
-    if (s.status !== 'running') throw conflict(`session is ${s.status}`)
+    if (s.status !== 'running') throw Err.conflict(`session is ${s.status}`)
     const token = this.tokens.sign({ k: 'attach', sid: s.id }, ATTACH_TTL_MS)
     const ws = this.cfg.publicUrl.replace(/^http/, 'ws')
     return {
@@ -79,7 +79,7 @@ export class SessionService {
   previewToken(sid: string, owner_id: string, port: number) {
     const s = this.owned(sid, owner_id)
     if (!Number.isInteger(port) || port < 1 || port > 65535)
-      throw badRequest('port must be 1-65535')
+      throw Err.badRequest('port must be 1-65535')
     const token = this.tokens.sign({ k: 'preview', sid: s.id, port }, PREVIEW_TTL_MS)
     const pub = new URL(this.cfg.publicUrl)
     const portSuffix = pub.port ? `:${pub.port}` : ''
@@ -89,9 +89,9 @@ export class SessionService {
 
   /** Ownership check. A session of another owner is indistinguishable from a missing one. */
   private owned(sid: string, owner_id: string): Session {
-    if (!owner_id) throw badRequest('owner_id is required')
+    if (!owner_id) throw Err.badRequest('owner_id is required')
     const s = this.store.session(sid)
-    if (!s || s.owner_id !== owner_id) throw notFound('session')
+    if (!s || s.owner_id !== owner_id) throw Err.notFound('session')
     return s
   }
 

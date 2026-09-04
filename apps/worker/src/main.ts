@@ -2,9 +2,9 @@ import { loadConfig } from './config'
 import { DockerDriver } from './docker'
 import { SessionManager } from './sessions'
 import { Tunnel } from './tunnel'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('worker')
+const log = Log.create('worker')
 const cfg = loadConfig()
 const driver = new DockerDriver(cfg.dockerSock, cfg.fingerprint)
 

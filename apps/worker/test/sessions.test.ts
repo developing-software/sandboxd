@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { SessionManager } from '../src/sessions'
 import type { CreateOpts, Duplex, PtyStream, SandboxDriver } from '../src/driver'
-import type { EndReason, SessionSpec } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 
 /** Records every call; `readyAfter` dial attempts fail before a service port accepts. */
 class FakeDriver implements SandboxDriver {
@@ -44,7 +44,7 @@ class FakeDriver implements SandboxDriver {
   }
 }
 
-const spec = (services: SessionSpec['services']): SessionSpec => ({
+const spec = (services: Msg.Spec['services']): Msg.Spec => ({
   sid: 's_1',
   image: 'sandbox:1',
   cmd: null,
@@ -53,7 +53,7 @@ const spec = (services: SessionSpec['services']): SessionSpec => ({
   secret_env: { S: 'x' },
   services,
 })
-const services: SessionSpec['services'] = [
+const services: Msg.Spec['services'] = [
   {
     name: 'db',
     image: 'postgres:16',
@@ -71,7 +71,7 @@ function setup() {
   const events: string[] = []
   mgr.on({
     started: (sid) => events.push(`started ${sid}`),
-    ended: (sid, r: EndReason, d) => events.push(`ended ${sid} ${r}${d ? ' ' + d : ''}`),
+    ended: (sid, r: Msg.EndReason, d) => events.push(`ended ${sid} ${r}${d ? ' ' + d : ''}`),
   })
   return { driver, mgr, events }
 }

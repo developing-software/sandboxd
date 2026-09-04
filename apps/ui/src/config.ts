@@ -2,7 +2,7 @@
 // presets and the catalog, and talks to the API on the user's behalf.
 import { fileURLToPath } from 'node:url'
 
-export type Env = Record<string, string | undefined>
+export type Vars = Record<string, string | undefined>
 
 export interface UiConfig {
   port: number
@@ -15,7 +15,7 @@ export interface UiConfig {
   defaultImage: string | null
 }
 
-export function loadConfig(env: Env = process.env): UiConfig {
+export function loadConfig(env: Vars = process.env): UiConfig {
   let serviceToken = env.SANDBOXD_SERVICE_TOKEN
   if (!serviceToken) {
     serviceToken = 'dev-token'

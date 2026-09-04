@@ -1,9 +1,9 @@
 import { loadConfig } from './config'
 import { PresetRegistry, loadPresetDir, type LoadedPresets } from './presets/index'
 import { createApp } from './app'
-import { logger } from '@sandboxd/core/log'
+import { Log } from '@sandboxd/core/log'
 
-const log = logger('ui')
+const log = Log.create('ui')
 const cfg = loadConfig()
 
 // Presets and the service catalog are data on disk; a bad file is a boot error, not a runtime surprise.

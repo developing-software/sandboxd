@@ -1,7 +1,7 @@
 // One connected host: multiplexes PTY and preview-port streams over its single
 // WebSocket using the binary framing. Knows nothing about enrollment or the store.
-import { encodeFrame } from '@sandboxd/core/framing'
-import type { CpMsg, HostMsg, SessionSpec, Size } from '@sandboxd/core/messages'
+import { Frame } from '@sandboxd/core/framing'
+import type { Msg } from '@sandboxd/core/messages'
 
 export interface StreamSub {
   onData(d: Uint8Array): void
@@ -13,7 +13,7 @@ export interface StreamSub {
 
 export interface PtyHandle {
   write(d: Uint8Array): void
-  resize(size: Size): void
+  resize(size: Msg.Size): void
   close(): void
 }
 export interface PortHandle {
@@ -32,7 +32,7 @@ export interface Transport {
 }
 
 /** Host messages that address one stream rather than the host as a whole. */
-export type StreamMsg = Extract<HostMsg, { stream: number }>
+export type StreamMsg = Extract<Msg.Host, { stream: number }>
 
 export class HostConn {
   private streams = new Map<number, StreamSub>()
@@ -54,7 +54,7 @@ export class HostConn {
   capacity(): Capacity {
     return { running: this.running, max: this.max }
   }
-  send(msg: CpMsg) {
+  send(msg: Msg.Cp) {
     this.transport.send(JSON.stringify(msg))
   }
   close() {
@@ -107,7 +107,7 @@ export class HostConn {
   }
 
   // ---- commands to the host ----
-  createSession(spec: SessionSpec) {
+  createSession(spec: Msg.Spec) {
     this.send({ type: 'session.create', spec })
     this.running += 1 // optimistic until the next heartbeat
   }
@@ -116,11 +116,11 @@ export class HostConn {
     this.send({ type: 'session.destroy', sid })
   }
 
-  openPty(sid: string, size: Size, sub: StreamSub): PtyHandle {
+  openPty(sid: string, size: Msg.Size, sub: StreamSub): PtyHandle {
     const stream = this.allocStream(sub)
     this.send({ type: 'pty.open', sid, stream, size })
     return {
-      write: (d) => this.transport.send(encodeFrame(stream, d)),
+      write: (d) => this.transport.send(Frame.encode(stream, d)),
       resize: (sz) => this.send({ type: 'pty.resize', sid, size: sz }),
       close: () => {
         if (this.streams.delete(stream)) this.send({ type: 'pty.close', stream })
@@ -137,7 +137,7 @@ export class HostConn {
     const { promise, resolve, reject } = Promise.withResolvers<PortHandle>()
     let stream = 0
     const handle: PortHandle = {
-      write: (d) => this.transport.send(encodeFrame(stream, d)),
+      write: (d) => this.transport.send(Frame.encode(stream, d)),
       close: () => {
         if (this.streams.delete(stream)) this.send({ type: 'port.close', stream })
       },

@@ -1,11 +1,11 @@
-import { badRequest } from '@sandboxd/core/errors'
+import { Err } from '@sandboxd/core/errors'
 import type { Body, Preset, PresetInfo } from './types'
 
 export type { Body, Expanded, FieldSpec, FieldType, Preset, PresetInfo } from './types'
 export { loadPresetDir, loadPresetFile, type LoadedPresets } from './loader'
 export { parsePresetDoc, type PresetDoc } from './schema'
 export { presetFromDoc } from './preset'
-export { Catalog, loadCatalog, type CatalogView } from './catalog'
+export { Catalog } from './catalog'
 
 /** Presets by name, plus the rule for picking one when the request names none:
  *  the first preset that `claims` the body, else `fallback`. */
@@ -40,7 +40,7 @@ export class PresetRegistry {
     const name = body.preset
     if (name !== undefined) {
       if (typeof name !== 'string' || !this.byName.has(name))
-        throw badRequest(`preset must be one of ${this.names.join(', ')}`)
+        throw Err.badRequest(`preset must be one of ${this.names.join(', ')}`)
       return this.byName.get(name)!
     }
     for (const p of this.byName.values()) if (p.claims?.(body)) return p

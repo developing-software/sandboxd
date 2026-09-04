@@ -2,13 +2,8 @@
 // 400s, the OpenAPI document reads them for docs, and the UI reads the route types
 // through hono/client — one declaration, three consumers.
 import { z } from 'zod'
-import { validateEnv } from './env'
-import {
-  DEFAULT_READY_TIMEOUT_S,
-  MAX_READY_TIMEOUT_S,
-  NAME_RE,
-  SANDBOX_ALIAS,
-} from './services'
+import { Env } from './env'
+import { Service } from './services'
 
 export const MIN_IDLE_S = 60
 export const DEFAULT_IDLE_S = 1800
@@ -17,7 +12,7 @@ export const DEFAULT_IDLE_S = 1800
 const envMap = (name: string) =>
   z.record(z.string(), z.string()).superRefine((v, ctx) => {
     try {
-      validateEnv(name, v)
+      Env.validate(name, v)
     } catch (e) {
       ctx.addIssue({ code: 'custom', message: (e as Error).message })
     }
@@ -30,7 +25,7 @@ export const Ready = z
     port: Port.meta({
       description: 'TCP port the worker waits on before starting the sandbox.',
     }),
-    timeout_s: z.int().min(1).max(MAX_READY_TIMEOUT_S).default(DEFAULT_READY_TIMEOUT_S),
+    timeout_s: z.int().min(1).max(Service.MAX_TIMEOUT_S).default(Service.DEFAULT_TIMEOUT_S),
   })
   .meta({ description: 'Readiness gate for a sidecar.' })
 
@@ -39,8 +34,8 @@ export const ServiceInput = z
   .object({
     name: z
       .string()
-      .regex(NAME_RE, `must match ${NAME_RE}`)
-      .refine((n) => n !== SANDBOX_ALIAS, `"${SANDBOX_ALIAS}" is reserved`)
+      .regex(Service.NAME_RE, `must match ${Service.NAME_RE}`)
+      .refine((n) => n !== Service.ALIAS, `"${Service.ALIAS}" is reserved`)
       .meta({ description: 'Hostname on the session network.', example: 'db' }),
     image: z.string().trim().min(1).meta({ example: 'postgres:16' }),
     env: envMap('env').default({}),

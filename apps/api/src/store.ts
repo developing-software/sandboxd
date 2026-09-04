@@ -1,10 +1,10 @@
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { EndReason, ServiceSpec } from '@sandboxd/core/messages'
+import type { Msg } from '@sandboxd/core/messages'
 
-/** The persisted (non-secret) half of a ServiceSpec. */
-export type ServiceDecl = Omit<ServiceSpec, 'secret_env'>
+/** The persisted (non-secret) half of a Msg.Service. */
+export type ServiceDecl = Omit<Msg.Service, 'secret_env'>
 
 /** Bump when the schema changes. There are no migrations: a db with another version is refused. */
 const SCHEMA_VERSION = 4
@@ -29,7 +29,7 @@ export interface Session {
   owner_id: string
   host_id: string | null
   status: SessionStatus
-  ended_reason: EndReason | null
+  ended_reason: Msg.EndReason | null
   ended_detail: string | null
   image: string
   /** null = the daemon's default entry. */
@@ -200,7 +200,7 @@ export class Store {
   markKnown(id: string) {
     this.db.run('UPDATE sessions SET unknown_since=NULL WHERE id=?', [id])
   }
-  markEnded(id: string, reason: EndReason, detail?: string) {
+  markEnded(id: string, reason: Msg.EndReason, detail?: string) {
     this.db.run(
       "UPDATE sessions SET status='ended', ended_reason=?, ended_detail=?, ended_at=?, unknown_since=NULL WHERE id=? AND status<>'ended'",
       [reason, detail ?? null, Date.now(), id],

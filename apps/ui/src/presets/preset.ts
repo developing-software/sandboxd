@@ -1,7 +1,7 @@
 // A runtime Preset from a validated preset.yaml: field validation, env emission
 // and catalog service resolution. Request-time errors are 400s.
-import { badRequest } from '@sandboxd/core/errors'
-import { fromCatalog, type ComposeServices } from '../services'
+import { Err } from '@sandboxd/core/errors'
+import { Service } from '../services'
 import type { Catalog } from './catalog'
 import type { PresetDoc } from './schema'
 import type { Body, Expanded, FieldSpec, Preset } from './types'
@@ -38,10 +38,10 @@ export function presetFromDoc(doc: PresetDoc, catalog: Catalog): Preset {
   }
 }
 
-function composeOf(refs: PresetDoc['serviceRefs'], catalog: Catalog): ComposeServices {
-  const out: ComposeServices = {}
+function composeOf(refs: PresetDoc['serviceRefs'], catalog: Catalog): Service.Map {
+  const out: Service.Map = {}
   refs.forEach((r, i) => {
-    const [name, svc] = fromCatalog(r, catalog, `preset services[${i}]`)
+    const [name, svc] = Service.resolve(r, catalog, `preset services[${i}]`)
     out[name] = svc
   })
   return out
@@ -52,33 +52,33 @@ function fieldValue(f: FieldSpec, raw: unknown): string | undefined {
   let v = raw
   if (typeof v === 'string' && f.type !== 'bool' && f.type !== 'int') v = v.trim()
   if (v === undefined || v === null || v === '') {
-    if (f.required) throw badRequest(`${f.name} is required`)
+    if (f.required) throw Err.badRequest(`${f.name} is required`)
     return f.default === undefined ? undefined : String(f.default)
   }
   switch (f.type) {
     case 'string':
-      if (typeof v !== 'string') throw badRequest(`${f.name} must be a string`)
+      if (typeof v !== 'string') throw Err.badRequest(`${f.name} must be a string`)
       return v
     case 'enum':
       if (typeof v !== 'string' || !f.values!.includes(v))
-        throw badRequest(`${f.name} must be one of ${f.values!.join(', ')}`)
+        throw Err.badRequest(`${f.name} must be one of ${f.values!.join(', ')}`)
       return v
     case 'url':
       if (typeof v !== 'string' || !/^https?:\/\//.test(v))
-        throw badRequest(`${f.name} must be http(s)`)
+        throw Err.badRequest(`${f.name} must be http(s)`)
       return v.replace(/\/+$/, '')
     case 'int': {
       const lo = f.min ?? Number.MIN_SAFE_INTEGER
       const hi = f.max ?? Number.MAX_SAFE_INTEGER
       if (!Number.isInteger(v) || (v as number) < lo || (v as number) > hi) {
-        throw badRequest(
+        throw Err.badRequest(
           `${f.name} must be an integer${f.min !== undefined || f.max !== undefined ? ` in ${f.min ?? ''}..${f.max ?? ''}` : ''}`,
         )
       }
       return String(v)
     }
     case 'bool':
-      if (typeof v !== 'boolean') throw badRequest(`${f.name} must be true or false`)
+      if (typeof v !== 'boolean') throw Err.badRequest(`${f.name} must be true or false`)
       return v ? 'true' : 'false'
   }
 }
@@ -93,7 +93,7 @@ export function readPath(body: Body, path: string): unknown {
   for (let i = 0; i < parts.length; i++) {
     if (cur === undefined || cur === null) return undefined
     if (typeof cur !== 'object' || Array.isArray(cur))
-      throw badRequest(`${parts.slice(0, i).join('.')} must be an object`)
+      throw Err.badRequest(`${parts.slice(0, i).join('.')} must be an object`)
     cur = (cur as Record<string, unknown>)[parts[i]!]
   }
   return cur
