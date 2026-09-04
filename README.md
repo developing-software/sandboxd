@@ -23,7 +23,8 @@ bun run image        # build one image per preset (apps/ui/presets/*/Dockerfile 
 bun run dev          # api on :8080, ui on :8081 and a worker on this machine, one terminal
 bun run dev:api      # or one at a time: control plane, state in ./.data, docs at /doc
 bun run dev:ui       # UI on :8081, talking to the API with the service token
-bun run dev:worker   # worker on this machine; approve it in the UI with the printed code
+bun run dev:worker   # worker on this machine; approve it in the UI with the printed code,
+                     # or export the same SANDBOXD_JOIN_TOKEN for the api and the worker to skip that
 ```
 
 Open http://localhost:8081.

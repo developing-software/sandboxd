@@ -18,7 +18,7 @@
     { "file": "apps/api/src/schema.ts", "exports": ["CreateSessionInput"] },
   ],
   // A peer dependency of hono-openapi (its validator is re-exported through
-  // apps/api/src/http/common.ts), so it is required at install time with no direct import.
+  // apps/api/src/http/doc.ts), so it is required at install time with no direct import.
   "ignoreDependencies": ["@hono/standard-validator"],
   "boundaries": {
     // The control plane and the worker are siblings that only meet on the wire: the
