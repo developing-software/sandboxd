@@ -29,7 +29,8 @@ browser paths — attach (`attach.ts`) and preview (`preview/`).
   `badRequest`, `notFound`, `conflict`; `.onError` serializes as `{error}`.
 - **The preview proxy and the tunnel run before Hono** — one matches on hostname, the
   other is a bare upgrade. Keep that order in `main.ts`.
-- Schema changes bump `SCHEMA_VERSION` in `store.ts`. There are no migrations in v1.
+- Schema changes bump `SCHEMA_VERSION` in `store.ts`. There are no migrations in v1: a
+  db with another version is dropped and recreated at boot, with a warning.
 
 ## Testing
 

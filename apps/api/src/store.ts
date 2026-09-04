@@ -2,8 +2,11 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Msg } from '@sandboxd/core/messages'
+import { Log } from '@sandboxd/core/log'
 
-/** Bump when the schema changes. There are no migrations: a db with another version is refused. */
+const log = Log.create('store')
+
+/** Bump when the schema changes. There are no migrations: a db with another version is wiped. */
 const SCHEMA_VERSION = 5
 
 export type HostStatus = 'pending' | 'approved' | 'revoked'
@@ -71,10 +74,15 @@ export class Store {
     const hasTables = !!this.db
       .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'")
       .get()
+    // Every row is disposable (sessions are ephemeral, hosts re-enroll), so an old schema
+    // is dropped rather than refused: a unit under Restart=always must not crash-loop.
     if (hasTables && version !== SCHEMA_VERSION) {
-      throw new Error(
-        `${path}: schema version ${version}, expected ${SCHEMA_VERSION}. No migrations in v1: delete the db file and restart.`,
-      )
+      log.warn('schema version changed; dropping all state', {
+        path,
+        found: version,
+        expected: SCHEMA_VERSION,
+      })
+      this.db.exec('DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS hosts;')
     }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS hosts (
