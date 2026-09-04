@@ -159,6 +159,9 @@ in
                   "1.1.1.1:53"
                   "1.0.0.1:53"
                 ];
+                # A poll before the TXT propagates gets a NODATA cached for the zone's
+                # negative TTL (1800s on Cloudflare), and the wildcard check then times out.
+                propagation.delayBeforeChecks = "30s";
               };
             };
           }
