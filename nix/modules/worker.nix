@@ -1,0 +1,93 @@
+# services.sandboxd.worker — the per-host daemon. Enables Docker and runs the worker in
+# the docker group; its self-generated secret persists in the state directory, so the
+# control plane keeps recognising the host across reboots and upgrades.
+{
+  config,
+  lib,
+  ...
+}:
+let
+  cfg = config.services.sandboxd.worker;
+  inherit (lib) mkOption types;
+in
+{
+  options.services.sandboxd.worker = {
+    enable = lib.mkEnableOption "the sandboxd worker daemon";
+    package = mkOption {
+      type = types.package;
+      description = "The sandboxd-worker package (set by the flake's nixosModules.worker).";
+    };
+    url = mkOption {
+      type = types.str;
+      example = "wss://sandboxd.example.com";
+      description = "The control plane to dial (SANDBOXD_URL).";
+    };
+    name = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "Host name shown in the control plane (SANDBOXD_WORKER_NAME); null = hostname.";
+    };
+    maxSessions = mkOption {
+      type = types.ints.positive;
+      default = 4;
+      description = "Concurrent sandboxes on this host (SANDBOXD_WORKER_MAX_SESSIONS).";
+    };
+    entry = mkOption {
+      type = types.listOf types.str;
+      default = [ "/usr/local/bin/sandboxd-entry" ];
+      description = "Command exec'd in the PTY inside every sandbox (SANDBOXD_WORKER_ENTRY).";
+    };
+    extraEnv = mkOption {
+      type = types.attrsOf types.str;
+      default = { };
+      description = "Extra non-secret environment for the unit.";
+    };
+    environmentFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "/etc/sandboxd/worker.env";
+      description = "Optional KEY=value file, e.g. registry credentials. The worker itself needs no secret.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    virtualisation.docker.enable = true;
+
+    systemd.services.sandboxd-worker = {
+      description = "sandboxd worker";
+      wantedBy = [ "multi-user.target" ];
+      wants = [ "network-online.target" ];
+      requires = [ "docker.service" ];
+      after = [
+        "network-online.target"
+        "docker.service"
+      ];
+      environment = {
+        SANDBOXD_URL = cfg.url;
+        SANDBOXD_WORKER_MAX_SESSIONS = toString cfg.maxSessions;
+        SANDBOXD_WORKER_CONFIG = "/var/lib/sandboxd-worker/host.json";
+        SANDBOXD_WORKER_ENTRY = builtins.toJSON cfg.entry;
+        DOCKER_SOCK = "/var/run/docker.sock";
+      }
+      // lib.optionalAttrs (cfg.name != null) { SANDBOXD_WORKER_NAME = cfg.name; }
+      // cfg.extraEnv;
+      serviceConfig = {
+        ExecStart = lib.getExe cfg.package;
+        EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
+        DynamicUser = true;
+        SupplementaryGroups = [ "docker" ];
+        StateDirectory = "sandboxd-worker";
+        StateDirectoryMode = "0700";
+        Restart = "always";
+        RestartSec = 5;
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ProtectKernelTunables = true;
+        ProtectControlGroups = true;
+        LockPersonality = true;
+      };
+    };
+  };
+}

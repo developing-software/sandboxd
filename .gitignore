@@ -40,3 +40,12 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # tool caches and CI reports
 .fallow
 junit.xml
+
+# nix / terraform
+result
+result-*
+infra/**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example

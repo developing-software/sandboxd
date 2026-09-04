@@ -7,6 +7,7 @@
   ],
   "type": "module",
   "scripts": {
+    "sso": "aws sso login --sso-session=a3data",
     "dev": "bun run scripts/dev.ts",
     "api": "bun run apps/api/src/main.ts",
     "ui": "bun run apps/ui/src/main.ts",
@@ -22,7 +23,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fallow": "bunx fallow health --hotspots --top 3 && bunx fallow dead-code && bunx fallow dupes",
-    "postinstall": "bun2nix -o nix/bun.nix"
+    "postinstall": "bun2nix -o nix/bun.nix -c ../"
   },
   "devDependencies": {
     "@types/bun": "latest",
