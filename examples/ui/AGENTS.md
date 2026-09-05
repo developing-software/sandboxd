@@ -51,15 +51,15 @@ The formatter owns layout — no semicolons, single quotes, width 95. Never hand
 
 From this directory: `bun install` once, then
 
-| Command             | What                                        |
-| ------------------- | ------------------------------------------- |
-| `bun run dev`       | The UI on :8081, talking to the local API   |
+| Command             | What                                          |
+| ------------------- | --------------------------------------------- |
+| `bun run dev`       | The UI on :8081, talking to the local API     |
 | `bun run image`     | One Docker image per preset with a Dockerfile |
-| `bun test`          |                                             |
-| `bun run typecheck` |                                             |
-| `bun run fmt`       | `oxfmt`, not Prettier                       |
-| `bun run lint`      | `oxlint`, not ESLint                        |
-| `bun run fallow`    | Dead code and duplication                   |
+| `bun test`          |                                               |
+| `bun run typecheck` |                                               |
+| `bun run fmt`       | `oxfmt`, not Prettier                         |
+| `bun run lint`      | `oxlint`, not ESLint                          |
+| `bun run fallow`    | Dead code and duplication                     |
 
 Before handing work back: `bun run fmt && bun run lint && bun run typecheck && bun test`.
 `bun run fallow` reports inherited warnings; do not add to them.

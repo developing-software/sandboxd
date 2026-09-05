@@ -11,22 +11,18 @@
   },
   "env": { "builtin": true, "es2024": true },
   "rules": {
-    // TypeScript declaration merging is deliberate here and is not a redeclaration: a Zod
-    // schema paired with its inferred type (`schema.ts`).
+    // A namespace merged with the type or class of the same name is the house style, not a
+    // redeclaration (AGENTS.md, "Style").
     "no-redeclare": "off",
-    // The regexes here match ASCII routes, headers and env names; the `u` flag buys nothing.
+    // The regexes here match ASCII preset names and env names; the `u` flag buys nothing.
     "require-unicode-regexp": "off",
     // A negated `!== undefined` guard reads better than the inverted form the rule wants.
     "no-negated-condition": "off",
     "unicorn/no-negated-condition": "off",
-    // The worker's orphan sweep talks to one Docker daemon, one container at a time.
-    // Sequential awaits are the point, not an oversight.
+    // The preset loader reads one directory at a time and reports the first bad file by
+    // name. Sequential awaits are the point, not an oversight.
     "no-await-in-loop": "off",
-    // The tunnel and the tests create one WebSocket per connection and want exactly one
-    // handler per event; `on<event> =` says that, `addEventListener` would hide a second.
-    "unicorn/prefer-add-event-listener": "off",
-    // Flags a no-op default that is reassigned once a socket opens, and test-local helpers
-    // that belong to the one test using them.
+    // Flags test-local helpers that belong to the one test using them.
     "unicorn/consistent-function-scoping": "off"
   },
   "overrides": [

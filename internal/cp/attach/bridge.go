@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/coder/websocket"
 
@@ -68,10 +69,19 @@ func (b *Bridge) Serve(w http.ResponseWriter, r *http.Request, sid string, size 
 		return
 	}
 	ctx := r.Context()
-	v := &viewer{ws: ws, out: make(chan []byte, viewerQueue), reason: make(chan string, 1)}
+	v := &viewer{
+		ws:     ws,
+		out:    make(chan []byte, viewerQueue),
+		reason: make(chan string, 1),
+		stop:   make(chan struct{}),
+	}
 	done := make(chan struct{})
 	go func() { defer close(done); v.write(ctx) }()
-	defer func() { <-done }()
+	// Told to go, then waited for. The request context is still live while this handler
+	// returns, so the writer has to be woken by something; closing the PTY below happens
+	// to do it, through the reader goroutine, but only because of the order these defers
+	// run in. Saying it directly costs a channel and removes that argument.
+	defer func() { v.shutdown(); <-done }()
 
 	pty, err := b.open(sid, size)
 	if err != nil {
@@ -142,6 +152,8 @@ type viewer struct {
 	ws     *websocket.Conn
 	out    chan []byte
 	reason chan string
+	stop   chan struct{}
+	once   sync.Once
 }
 
 func (v *viewer) write(ctx context.Context) {
@@ -149,6 +161,8 @@ func (v *viewer) write(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-v.stop:
 			return
 		case reason := <-v.reason:
 			msg, err := json.Marshal(serverMsg{Type: "closed", Reason: reason})
@@ -172,9 +186,15 @@ func (v *viewer) send(b []byte) {
 	}
 }
 
+// close asks the writer to say why it is going, and then to go.
 func (v *viewer) close(reason string) {
 	select {
 	case v.reason <- reason:
 	default: // already closing, and the first reason is the true one
 	}
+}
+
+// shutdown ends the writer without a word, for when there is nobody left to tell.
+func (v *viewer) shutdown() {
+	v.once.Do(func() { close(v.stop) })
 }

@@ -1,0 +1,61 @@
+# Go half of the gate. `depguard` is the important one: it replaces the fallow workspace
+# boundary, because `internal/` only blocks imports from outside the module and would let
+# `internal/worker` import `internal/cp` happily. See DESIGN.md decision 18.
+version: '2'
+
+linters:
+  default: standard # errcheck govet ineffassign staticcheck unused
+  enable:
+    - depguard # the import boundary below
+    - errorlint # a wrapped error compared with == instead of errors.Is
+    - bodyclose # every response body on the preview path is a leak if it escapes
+    - nilerr # `if err != nil { return nil }` — the store's new error returns invite this
+    - misspell
+
+  settings:
+    depguard:
+      rules:
+        worker:
+          files: ['**/internal/worker/**']
+          deny:
+            - pkg: sandboxd/internal/cp
+              desc: the control plane and the worker meet on the wire, nowhere else
+        cp:
+          files: ['**/internal/cp/**']
+          deny:
+            - pkg: sandboxd/internal/worker
+              desc: the control plane and the worker meet on the wire, nowhere else
+        wire:
+          files: ['**/internal/wire/**']
+          deny:
+            - pkg: sandboxd/internal/cp
+              desc: wire is a leaf
+            - pkg: sandboxd/internal/worker
+              desc: wire is a leaf
+        cmd-api:
+          files: ['**/cmd/sandboxd-api/**']
+          deny:
+            - pkg: sandboxd/internal/worker
+              desc: a cmd wires one tree
+        cmd-worker:
+          files: ['**/cmd/sandboxd-worker/**']
+          deny:
+            - pkg: sandboxd/internal/cp
+              desc: a cmd wires one tree
+    # No locale: the prose in this repo is British, and `behaviour` is not a typo. Left on
+    # for the real ones.
+    misspell: {}
+
+  exclusions:
+    generated: lax
+    rules:
+      # A test's own fixtures and fakes are allowed to ignore what they wrote themselves.
+      - path: _test\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gofumpt:
+      module-path: sandboxd

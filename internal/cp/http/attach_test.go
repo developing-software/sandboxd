@@ -234,6 +234,56 @@ func TestASandboxFromPostToKeystroke(t *testing.T) {
 	}
 }
 
+func TestABrowserLeavingClosesItsPTY(t *testing.T) {
+	a := newAPI(t)
+	w := a.connectWorker()
+
+	v := decode[cp.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
+		map[string]any{"owner_id": "me", "image": "i"}))
+	if _, is := w.control().(*wire.SandboxCreate); !is {
+		t.Fatal("expected sandbox.create")
+	}
+	w.send(&wire.SandboxStarted{SID: v.ID})
+	a.awaitStatus(v.ID, store.Running)
+
+	token := decode[cp.AttachToken](t, a.do(http.MethodPost,
+		"/sandboxes/"+v.ID+"/attach-token", map[string]any{"owner_id": "me"})).Token
+	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	defer cancel()
+	url := "ws" + strings.TrimPrefix(a.srv.URL, "http") + "/attach?token=" + token
+	// coder/websocket documents that the dial response body needs no closing.
+	browser, _, err := websocket.Dial(ctx, url, nil) //nolint:bodyclose
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, is := w.control().(*wire.PtyOpen)
+	if !is {
+		t.Fatal("expected pty.open")
+	}
+
+	// The tab is closed while the sandbox is still running and its terminal still quiet.
+	if err := browser.CloseNow(); err != nil {
+		t.Fatal(err)
+	}
+	got, is := w.control().(*wire.PtyClose)
+	if !is || got.Stream != open.Stream {
+		t.Fatalf("the host was told %+v, want pty.close for stream %d", got, open.Stream)
+	}
+
+	// And the handler let go of the request. A shutdown is the cheapest way to see it:
+	// with both sockets gone there is nothing left in flight, so Close returns at once.
+	if err := w.ws.CloseNow(); err != nil {
+		t.Fatal(err)
+	}
+	shut := make(chan struct{})
+	go func() { a.srv.Close(); close(shut) }()
+	select {
+	case <-shut:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a handler is still running with nobody on the other end of it")
+	}
+}
+
 func TestADeleteReachesTheWorker(t *testing.T) {
 	a := newAPI(t)
 	w := a.connectWorker()

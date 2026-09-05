@@ -5,64 +5,101 @@
 
 ## Stack
 
-Bun workspaces monorepo. Bun is the only runtime: one entrypoint per app, no bundling
-targets.
+**This is a Go repository.** One module, `sandboxd`, at the root: two daemons, one wire
+contract, one dev runner. The only TypeScript left is `examples/ui`, the reference client,
+which is a self-contained Bun app that imports nothing from here (`DESIGN.md` decisions
+16, 17 and 18).
 
-| Path              | Package            | What                                                                                    |
-| ----------------- | ------------------ | --------------------------------------------------------------------------------------- |
-| `packages/core`   | `@sandboxd/core`   | The wire contract: messages, framing, ids, log. A leaf.                                 |
-| `apps/api`        | `@sandboxd/api`    | The control plane: a generic JSON API (Hono + Zod), host tunnel, attach + preview proxy |
-| `apps/ui`         | `@sandboxd/ui`     | The parent-app stand-in: service token, presets, the xterm.js page                      |
-| `apps/worker`     | `@sandboxd/worker` | The per-host daemon: Docker driver, PTYs, one outbound tunnel                           |
-| `apps/ui/presets` | —                  | Data. One folder per preset with its Dockerfile. Built by `bun run image`               |
+| Path                    | What                                                                             |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `internal/wire`         | The wire contract: messages, framing, ids. A leaf.                               |
+| `internal/cp`           | The control plane: config, tokens, scheduler, sandbox use cases                  |
+| `internal/cp/store`     | SQLite. The only package that speaks SQL.                                        |
+| `internal/cp/hosts`     | Worker tunnels: enrollment, the hub, and a stream that is a `net.Conn`           |
+| `internal/cp/attach`    | Browser terminal ↔ PTY                                                           |
+| `internal/cp/preview`   | `<port>-<sid>.<domain>` → a port inside a sandbox, over `httputil.ReverseProxy`  |
+| `internal/cp/http`      | huma: routes, validation, the OpenAPI document. The only place a status code lives |
+| `internal/worker`       | The per-host daemon: driver, PTYs, one outbound tunnel                           |
+| `internal/worker/driver`| Docker today (moby client); Kubernetes next                                      |
+| `cmd/sandboxd-api`      | Wiring only, one binary                                                          |
+| `cmd/sandboxd-worker`   | Wiring only, one binary                                                          |
+| `scripts/dev`           | `go run ./scripts/dev` — the whole stack in one terminal. Not shipped.           |
+| `examples/ui`           | The reference client: service token, presets, the xterm.js page. Its own `AGENTS.md`. |
+| `examples/ui/presets`   | Data. One folder per preset with its Dockerfile. Built by `bun run image` there.  |
 
-Each package has its own `AGENTS.md` (symlinked as `CLAUDE.md`) with the rules for
-editing it.
-
-`api` and `worker` only meet on the wire: both import `core`, neither imports the other.
-`ui` sits in front of `api` and may import its types (the routes, for `hono/client`; the
-schema, for what it sends) — never the reverse. `core` imports nothing. Declared in `.fallowrc.jsonc`, enforced by `bun run fallow`.
+`cp` and `worker` only meet on the wire: both import `wire`, neither imports the other,
+and `wire` imports nothing of ours. `cp` never imports its own subpackages — it declares
+the interfaces it needs and `cmd/sandboxd-api` supplies them. Declared in `.golangci.yml`
+as `depguard` rules, enforced by `golangci-lint`.
 
 ## Commands
 
-| Command              | What                                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------- |
-| `bun run dev:api`    | Control plane on :8080, state in `.data/`, docs at `/doc` [DO NOT RUN unless the user asks] |
-| `bun run dev:ui`     | UI on :8081, talking to the local API [DO NOT RUN unless the user asks]                     |
-| `bun run dev:worker` | A worker on this machine, dialling the local CP [DO NOT RUN unless the user asks]           |
-| `bun run image`      | One Docker image per preset with a Dockerfile                                               |
-| `bun run test`       | Every package                                                                               |
-| `bun run typecheck`  | Every package                                                                               |
-| `bun run fmt`        | `oxfmt`, not Prettier                                                                       |
-| `bun run lint`       | `oxlint`, not ESLint                                                                        |
-| `bun run fallow`     | Dead code, duplication, complexity, import boundaries                                       |
+| Command                        | What                                                            |
+| ------------------------------ | --------------------------------------------------------------- |
+| `go build ./...`               | Both binaries and the dev runner                                |
+| `go test ./...`                | Every Go package; CI adds `-race`                               |
+| `go vet ./...`                 |                                                                 |
+| `golangci-lint run`            | Lint, including the `depguard` import boundary                  |
+| `golangci-lint fmt`            | `gofumpt`, run through the linter so the version is pinned once |
+| `go run ./scripts/dev`         | API, worker and UI together [DO NOT RUN unless the user asks]   |
+| `go run ./cmd/sandboxd-api`    | Control plane [DO NOT RUN unless the user asks]                 |
+| `go run ./cmd/sandboxd-worker` | A worker on this machine [DO NOT RUN unless the user asks]      |
+| `nix build .#api` / `.#worker` | One static binary each; `--system aarch64-linux` cross-compiles |
 
-Before handing work back: `bun run fmt && bun run lint && bun run typecheck && bun run test`.
-`bun run fallow` still reports inherited dead code; do not add to it.
+The live Docker check is env-guarded and needs an Engine:
+`SANDBOXD_DOCKER_TEST=1 go test ./internal/worker/driver/`.
 
-## Style
+Neither toolchain is on `PATH` outside the devShell: `nix develop --command <cmd>`, or
+`direnv allow` once. `.zed/` points Zed at the same devShell.
 
-The formatter owns layout — no semicolons, single quotes, width 95. Never hand-format.
+Before handing work back:
+`golangci-lint fmt && go vet ./... && golangci-lint run && go test ./...`.
 
-- Keep things in one function unless composable or reusable
-- Avoid `try`/`catch` where possible; avoid `any`; avoid `else` — early return instead
-- Prefer single-word names for locals; multi-word only when one word is ambiguous
-- **Group a module's exports in one namespace named for the file**: `Msg.parse`, not
-  `parseMsg`; `Env.validate`, not `validateEnv`. The namespace carries the noun, so
-  the member is a verb and stays one word. Private helpers stay below it at module scope.
-- Namespace members are `export const`, never `export function` — oxlint's
-  `no-inner-declarations` fires on the declaration form. Classes may merge with a
-  namespace of the same name (`Thing.load` beside `new Thing()`)
-- A class earns its keep when it holds injected state (`Store`, `Scheduler`, `Tunnel`).
-  A module of free functions is a namespace instead
-- Use Bun APIs when possible (`Bun.file()`, `Bun.YAML`, `bun:sqlite`)
-- Rely on type inference; annotate exports and interfaces
+**That is the gate.** `examples/ui` has its own, in its own `AGENTS.md`, and CI runs both.
+
+## Go
+
+Stdlib first. The dependency table in `PLAN.md` is **closed** — adding a module is a
+`DESIGN.md` row, not a judgement call.
+
+- **A package is a noun, a function is a verb.** `wire.Decode`, `store.SQLite`,
+  `hosts.Hub`. Never `wire.DecodeWireMessage`: the package name is already in the call.
+- **The consumer declares the interface, the producer exports a struct.** `store.SQLite`
+  is concrete and exported; `scheduler.go` declares the ten-method interface it needs and
+  `sandboxes.go` a four-method one. A single 20-method `Store` would port the god object.
+- **Interfaces exist so a package does not depend on SQLite, not so a test can fake it.**
+  The CP suite drives the real store on `:memory:`; a `fakeStore` is the banned mock of
+  our own module. Fakes are for boundaries we do not own: the driver, the transport.
+- Errors wrap with `%w` and are compared with `errors.Is`. Use cases return the sentinels
+  in `cp/errors.go` (`ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrUnsatisfiable`);
+  **only `cp/http` knows a status code.** An HTTP status raised inside a use case is the
+  bug that rule exists to prevent.
+- No `any` in an exported signature. `json.RawMessage` at the wire boundary is not `any`.
+- Everything long-lived takes a `context.Context` as its first parameter.
+- **One writer goroutine per WebSocket**, fed by a buffered channel; nothing else calls
+  `Write`. Closing the channel closes the socket.
+- A full writer channel is a decision, per stream kind, written down where it happens:
+  a PTY viewer is **dropped** (the ring replays on reattach), a port stream **blocks**
+  (that is the TCP backpressure the `net.Conn` promises).
+- **The scheduler goroutine is the only writer of sandbox state**, and that includes the
+  insert: a row a handler wrote would be visible to the next drain before its secrets
+  were, and would be placed twice. API calls reach the loop as events on the same channel
+  the hub uses, so a caller cannot observe them out of order.
+- No lock is held while sending on a socket or calling into another struct. Copy out,
+  unlock, then act.
 - Comments state the non-obvious constraint — why, not what. Below three lines.
-- `.oxlintrc.json` disables a rule only with a written reason. A new false positive gets
-  the entry _and_ the reason; anything else gets fixed.
+- `.golangci.yml` disables a rule only with a written reason.
 
 ## Testing
 
-- `test/` next to the package, `bun:test`, no mocks of our own modules: the CP suite drives
-  the real `Store` on `:memory:` and the real scheduler against a fake `HostPlacement`
-- Secrets must never appear in a SQLite row: tests assert on the raw table, keep that
+- `_test.go` beside the source it tests.
+- **No mocks of our own modules**: the CP suite drives the real `store.SQLite` on
+  `:memory:` and the real scheduler against a fake placement. A fake is allowed where the
+  boundary is someone else's — the container driver, the tunnel transport, a sandbox's
+  own HTTP server.
+- Secrets must never appear in a SQLite row: tests assert on the raw table with
+  `store.Dump`, which exists for exactly that. Keep it.
+- `httptest.Server` for the API and for a real WebSocket against the real hub;
+  `net.Conn` end to end for the preview proxy.
+- Race-sensitive behaviour gets a test that fails without the fix, run under
+  `go test -race -count=N`. The double-placement and the double-close both had one.
