@@ -27,6 +27,13 @@ in
       "root"
       host.admin.user
     ];
+
+    # The org cache, read anonymously over https. Signatures are what make that safe, so
+    # the public key is the load-bearing half. extra-* appends: cache.nixos.org stays.
+    extra-substituters = [ "https://nix-cache.developing.company" ];
+    extra-trusted-public-keys = [
+      "nix-cache.developing.company-1:LL1H3Pj8yNXnCgRLxUYrYv7WdTol8RJpcvVEqVv8atY="
+    ];
   };
 
   services.tailscale.enable = host.tailscale.enable;

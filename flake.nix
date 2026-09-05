@@ -1,9 +1,16 @@
 {
   description = "sandboxd: control plane and per-host worker, built and deployed with Nix";
 
+  # The org cache (developing-software/infra, stacks/nix-cache) carries the api and worker
+  # builds. The rest of a host closure comes from cache.nixos.org; these two are the only
+  # things nothing upstream has, and on arm64 they are built under emulation.
   nixConfig = {
-    extra-substituters = [ "https://nix-community.cachix.org" ];
+    extra-substituters = [
+      "https://nix-cache.developing.company"
+      "https://nix-community.cachix.org"
+    ];
     extra-trusted-public-keys = [
+      "nix-cache.developing.company-1:LL1H3Pj8yNXnCgRLxUYrYv7WdTol8RJpcvVEqVv8atY="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
     ];
   };
