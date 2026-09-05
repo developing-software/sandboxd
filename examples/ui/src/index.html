@@ -159,7 +159,7 @@ async function attach(id) {
     ws.onclose = () => note("disconnected");
     term.focus();
   } catch (e) { note(e.message, "31"); }
-  renderSessions(lastSessions);
+  renderSandboxes(lastSandboxes);
 }
 term.onData((d) => { if (ws?.readyState === 1) ws.send(enc.encode(d)); });
 term.onBinary((d) => { if (ws?.readyState === 1) ws.send(Uint8Array.from(d, (c) => c.charCodeAt(0))); });
@@ -184,7 +184,7 @@ function renderHosts(hosts) {
       ${h.status === "revoked" ? `<span class="pill off">revoked</span>` : ""}
       <div class="id">${h.id}</div>
       ${h.status === "approved" ? `<div style="margin-top:6px"><button class="danger" onclick="revoke('${h.id}')">revoke</button></div>` : ""}
-    </div>`).join("") : `<div class="muted">no hosts yet — run <code>bun run dev:worker</code></div>`;
+    </div>`).join("") : `<div class="muted">no hosts yet — run <code>go run ./cmd/sandboxd-worker</code></div>`;
   if (html === lastHostsHtml) return; // don't clobber the approval input while typing
   const typed = {};
   document.querySelectorAll("[data-approve]").forEach((i) => { typed[i.dataset.approve] = i.value; });
@@ -206,7 +206,7 @@ window.revoke = async (id) => {
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset?.approve) approve(e.target.dataset.approve); });
 
 // ---- sandboxes ----
-let lastSessions = [];
+let lastSandboxes = [];
 function renderSandboxes(sandboxes) {
   lastSandboxes = sandboxes;
   $("sandboxes").innerHTML = sandboxes.length ? sandboxes.slice(0, 30).map((s) => {
@@ -291,7 +291,7 @@ async function refresh() {
   try {
     if (!Object.keys(presetsByName).length) await loadPresets();
     renderHosts(await api("GET", "/hosts"));
-    renderSessions(await api("GET", `/sandboxes?owner_id=${encodeURIComponent(owner())}`));
+    renderSandboxes(await api("GET", `/sandboxes?owner_id=${encodeURIComponent(owner())}`));
   } catch (e) {
     $("hosts").innerHTML = `<div class="msg">${e.message === "unauthorized" ? "unauthorized — the UI's SANDBOXD_SERVICE_TOKEN does not match the API's" : "error: " + e.message}</div>`;
   }
