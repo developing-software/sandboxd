@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sandboxd</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  :root { --bg:#0f1115; --panel:#161a22; --line:#262c38; --text:#d7dce5; --muted:#7c8594; --accent:#6ea8fe; --ok:#4cc38a; --warn:#f5b53f; --bad:#f06c6c; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); color: var(--text); display: grid; grid-template-columns: 380px minmax(0,1fr); }
+  aside { border-right: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 14px 14px 40px; }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  h1 { font-size: 14px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 12px; color: var(--accent); }
+  h2 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+  label { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 3px; }
+  input, textarea, select { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 64px; }
+  button { font: inherit; color: var(--text); background: #232938; border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b0e14; border-color: var(--accent); font-weight: 600; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row > * { flex: 1; }
+  .row > button { flex: 0 0 auto; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 6px 0; background: var(--bg); }
+  .card.pending { border-color: var(--warn); }
+  .card.active { border-color: var(--accent); }
+  .card a { color: var(--accent); text-decoration: none; }
+  .id { color: var(--muted); font-size: 11px; word-break: break-all; }
+  .pill { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; vertical-align: middle; }
+  .pill.on { color: var(--ok); border-color: var(--ok); }
+  .pill.off { color: var(--bad); border-color: var(--bad); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .muted { color: var(--muted); }
+  .msg { color: var(--bad); white-space: pre-wrap; }
+  #bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  #bar .spacer { flex: 1; }
+  #bar input { width: 80px; }
+  #term { flex: 1; min-height: 0; background: #000; padding: 6px; overscroll-behavior: contain; }
+  .xterm { height: 100%; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  .hidden { display: none; }
+  .check { display: flex; gap: 8px; align-items: baseline; margin: 6px 0; }
+  .check input { width: auto; margin: 0; }
+  .check label { margin: 0; color: var(--text); }
+</style>
+</head>
+<body>
+<aside>
+  <h1>sandboxd</h1>
+  <label>owner id</label>
+  <input id="owner" value="dev">
+
+  <h2>hosts</h2>
+  <div id="hosts" class="muted">loading…</div>
+
+  <h2>new sandbox</h2>
+  <label>preset <span class="muted">(from GET /presets)</span></label>
+  <select id="preset"></select>
+  <div id="presetDesc" class="muted" style="font-size:11px;margin-top:3px"></div>
+  <!-- One input per preset field, rendered from its schema; see renderFields(). -->
+  <div id="fields"></div>
+
+  <details>
+    <summary>image &amp; command</summary>
+    <label>image <span class="muted">(empty = the preset's image)</span></label>
+    <input id="image" placeholder="sandboxd-coding-agent:latest">
+    <label>command <span class="muted">(empty = image default entry)</span></label>
+    <input id="cmd" placeholder="bash -l   or   [&quot;python3&quot;,&quot;-m&quot;,&quot;http.server&quot;]">
+  </details>
+  <details>
+    <summary>env</summary>
+    <label>env <span class="muted">(KEY=value per line, stored)</span></label>
+    <textarea id="env" placeholder="NODE_ENV=development"></textarea>
+    <label>secret env <span class="muted">(KEY=value per line, never stored)</span></label>
+    <textarea id="secretEnv" placeholder="MY_API_KEY=…"></textarea>
+  </details>
+  <div style="margin-top:10px"><button id="create" class="primary">create sandbox</button></div>
+  <div id="createMsg" class="msg"></div>
+
+  <h2>sandboxes</h2>
+  <div id="sandboxes" class="muted">loading…</div>
+</aside>
+
+<main>
+  <div id="bar">
+    <span id="current" class="muted">no sandbox attached</span>
+    <span class="spacer"></span>
+    <label style="margin:0">port</label>
+    <input id="port" value="3000">
+    <button id="preview">open preview</button>
+    <button id="kill" class="danger">end sandbox</button>
+  </div>
+  <div id="term"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+window.addEventListener("error", (e) => {
+  if (/ResizeObserver loop/.test(e.message)) return; // benign, emitted by xterm's fit addon
+  $("hosts").innerHTML = `<div class="msg">page error: ${e.message}</div>`;
+});
+
+// ---- api ----
+const owner = () => $("owner").value.trim() || "dev";
+async function api(method, path, body) {
+  const r = await fetch(path, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `${r.status}`);
+  return j;
+}
+
+// ---- terminal ----
+const term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 10000, scrollSensitivity: 2, theme: { background: "#000000" } });
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open($("term"));
+fit.fit();
+// Refit at most once per frame and only when the geometry actually changed: every
+// fit that changes rows/cols becomes a SIGWINCH in the sandbox, and TUI agents
+// (Claude Code, Codex) redraw their whole frame on each one, which yanks the scroll.
+let fitQueued = false;
+function refit() {
+  if (fitQueued) return; fitQueued = true;
+  requestAnimationFrame(() => {
+    fitQueued = false;
+    try { const d = fit.proposeDimensions(); if (d && (d.cols !== term.cols || d.rows !== term.rows)) fit.fit(); } catch {}
+  });
+}
+new ResizeObserver(refit).observe($("term"));
+
+let ws = null, sid = null;
+const enc = new TextEncoder();
+const note = (s, color = "90") => term.write(`\r\n\x1b[${color}m[${s}]\x1b[0m\r\n`);
+
+async function attach(id) {
+  if (ws) { ws.onclose = null; ws.close(); }
+  sid = id;
+  term.reset();
+  $("current").textContent = id;
+  try {
+    const { wss_url } = await api("POST", `/sandboxes/${id}/attach-token`, { owner_id: owner() });
+    ws = new WebSocket(`${wss_url}&cols=${term.cols}&rows=${term.rows}`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === "string") { const m = JSON.parse(ev.data); note(`${m.type}: ${m.reason}`, "31"); }
+      else term.write(new Uint8Array(ev.data));
+    };
+    ws.onclose = () => note("disconnected");
+    term.focus();
+  } catch (e) { note(e.message, "31"); }
+  renderSessions(lastSessions);
+}
+term.onData((d) => { if (ws?.readyState === 1) ws.send(enc.encode(d)); });
+term.onBinary((d) => { if (ws?.readyState === 1) ws.send(Uint8Array.from(d, (c) => c.charCodeAt(0))); });
+term.onResize(({ cols, rows }) => { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols, rows })); });
+
+// ---- hosts ----
+let lastHostsHtml = "";
+function renderHosts(hosts) {
+  const html = hosts.length ? hosts.map((h) => h.status === "pending" ? `
+    <div class="card pending">
+      <b>${h.name}</b><span class="pill warn">waiting for approval</span>
+      <div class="id">${h.id}</div>
+      <div class="row" style="margin-top:6px">
+        <input placeholder="code printed by the agent" data-approve="${h.id}">
+        <button onclick="approve('${h.id}')">approve</button>
+      </div>
+    </div>` : `
+    <div class="card">
+      <b>${h.name}</b>
+      <span class="pill ${h.online ? "on" : "off"}">${h.online ? "online" : "offline"}</span>
+      ${h.capacity ? `<span class="pill">${h.capacity.running}/${h.capacity.max} sandboxes</span>` : ""}
+      ${h.status === "revoked" ? `<span class="pill off">revoked</span>` : ""}
+      <div class="id">${h.id}</div>
+      ${h.status === "approved" ? `<div style="margin-top:6px"><button class="danger" onclick="revoke('${h.id}')">revoke</button></div>` : ""}
+    </div>`).join("") : `<div class="muted">no hosts yet — run <code>bun run dev:worker</code></div>`;
+  if (html === lastHostsHtml) return; // don't clobber the approval input while typing
+  const typed = {};
+  document.querySelectorAll("[data-approve]").forEach((i) => { typed[i.dataset.approve] = i.value; });
+  lastHostsHtml = html;
+  $("hosts").innerHTML = html;
+  document.querySelectorAll("[data-approve]").forEach((i) => { if (typed[i.dataset.approve]) i.value = typed[i.dataset.approve]; });
+}
+window.approve = async (id) => {
+  const input = document.querySelector(`[data-approve="${id}"]`);
+  const code = input.value.trim().toUpperCase();
+  if (!code) { input.focus(); return; }
+  try { await api("POST", `/hosts/${id}/approve`, { code }); lastHostsHtml = ""; refresh(); }
+  catch (e) { alert(e.message); input.select(); }
+};
+window.revoke = async (id) => {
+  if (!confirm("Revoke this host? Its sandboxes will be lost.")) return;
+  await api("POST", `/hosts/${id}/revoke`); lastHostsHtml = ""; refresh();
+};
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset?.approve) approve(e.target.dataset.approve); });
+
+// ---- sandboxes ----
+let lastSessions = [];
+function renderSandboxes(sandboxes) {
+  lastSandboxes = sandboxes;
+  $("sandboxes").innerHTML = sandboxes.length ? sandboxes.slice(0, 30).map((s) => {
+    const pill = s.status === "running" ? "on" : s.status === "ended" ? "off" : "warn";
+    const status = s.status + (s.queue_position ? ` #${s.queue_position}` : "") + (s.ended_reason ? ` · ${s.ended_reason}` : "");
+    return `
+    <div class="card ${s.id === sid ? "active" : ""}">
+      <a href="#" onclick="attach('${s.id}');return false">${s.id}</a><span class="pill ${pill}">${status}</span>
+      <div class="id">${describe(s)}</div>
+      ${s.ended_detail ? `<div class="id">${s.ended_detail}</div>` : ""}
+    </div>`;
+  }).join("") : `<div class="muted">none yet</div>`;
+}
+window.attach = attach;
+function describe(s) {
+  const e = s.env || {};
+  return [
+    e.REPO, e.AGENT ? e.AGENT + (e.MODEL ? "/" + e.MODEL : "") : "",
+    s.cmd ? s.cmd.join(" ") : "", s.image,
+  ].filter(Boolean).map(esc).join(" · ");
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+function parseEnv(text) {
+  const out = {};
+  for (const line of text.split("\n")) {
+    const t = line.trim(); if (!t || t.startsWith("#")) continue;
+    const i = t.indexOf("="); if (i < 1) throw new Error(`env: expected KEY=value, got "${t}"`);
+    out[t.slice(0, i).trim()] = t.slice(i + 1);
+  }
+  return out;
+}
+function parseCmd(text) {
+  const t = text.trim(); if (!t) return undefined;
+  return t.startsWith("[") ? JSON.parse(t) : t.split(/\s+/);
+}
+// ---- presets: data in this app (presets/<name>/preset.yaml); the API only sees the result ----
+let presetsByName = {};
+async function loadPresets() {
+  const list = await api("GET", "/presets");
+  presetsByName = Object.fromEntries(list.map((p) => [p.name, p]));
+  const current = $("preset").value;
+  $("preset").innerHTML = list.map((p) => `<option value="${p.name}">${p.name} — ${esc(p.description)}</option>`).join("");
+  $("preset").value = presetsByName[current] ? current : presetsByName["coding-agent"] ? "coding-agent" : list[0]?.name;
+  renderFields();
+}
+function renderFields() {
+  const p = presetsByName[$("preset").value];
+  if (!p) return;
+  $("presetDesc").textContent = (p.image ? `image ${p.image}` : "image: from the caller, else SANDBOXD_DEFAULT_IMAGE")
+    + (p.idle_timeout_s ? ` · idle ${p.idle_timeout_s / 60} min` : "");
+  $("fields").innerHTML = p.fields.map((f) => {
+    const id = `f-${f.name.replace(/\./g, "-")}`;
+    const hint = f.description ? ` <span class="muted">(${esc(f.description)})</span>` : "";
+    const label = `<label for="${id}">${f.name}${f.required ? " *" : ""}${hint}</label>`;
+    const attrs = `id="${id}" data-path="${f.name}" data-type="${f.type}"`;
+    if (f.type === "enum") return `${label}<select ${attrs}><option value="">${f.default ? esc(f.default) + " (default)" : "default"}</option>${f.values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("")}</select>`;
+    if (f.type === "bool") return `<div class="check"><input type="checkbox" ${attrs} data-default="${!!f.default}"${f.default ? " checked" : ""}><label for="${id}">${f.name}${hint}</label></div>`;
+    if (f.multiline) return `${label}<textarea ${attrs}></textarea>`;
+    const type = f.secret ? "password" : f.type === "int" ? "number" : "text";
+    const range = f.type === "int" ? `${f.min !== undefined ? ` min="${f.min}"` : ""}${f.max !== undefined ? ` max="${f.max}"` : ""}` : "";
+    return `${label}<input type="${type}" ${attrs}${range} placeholder="${f.default !== undefined ? esc(f.default) : ""}">`;
+  }).join("");
+  if (p.preview?.port) $("port").value = String(p.preview.port);
+}
+$("preset").addEventListener("change", renderFields);
+/** Non-empty field inputs → nested body paths (`llm.base_url` → body.llm.base_url), typed per the schema. */
+function collectFields(body) {
+  const p = presetsByName[$("preset").value];
+  for (const el of $("fields").querySelectorAll("[data-path]")) {
+    const { path, type } = el.dataset;
+    let v;
+    if (type === "bool") { if (el.checked === (el.dataset.default === "true")) continue; v = el.checked; }
+    else { v = el.value.trim(); if (v === "") continue; if (type === "int") v = Number(v); }
+    const parts = path.split("."); let cur = body;
+    for (const k of parts.slice(0, -1)) cur = cur[k] ??= {};
+    cur[parts.at(-1)] = v;
+    if (p.preview?.port_field === path) $("port").value = String(v);
+  }
+}
+
+async function refresh() {
+  try {
+    if (!Object.keys(presetsByName).length) await loadPresets();
+    renderHosts(await api("GET", "/hosts"));
+    renderSessions(await api("GET", `/sandboxes?owner_id=${encodeURIComponent(owner())}`));
+  } catch (e) {
+    $("hosts").innerHTML = `<div class="msg">${e.message === "unauthorized" ? "unauthorized — the UI's SANDBOXD_SERVICE_TOKEN does not match the API's" : "error: " + e.message}</div>`;
+  }
+}
+
+$("create").onclick = async () => {
+  $("createMsg").textContent = "";
+  try {
+    const preset = $("preset").value;
+    const body = {
+      owner_id: owner(), preset,
+      image: $("image").value.trim() || undefined,
+      cmd: parseCmd($("cmd").value),
+      env: parseEnv($("env").value), secret_env: parseEnv($("secretEnv").value),
+    };
+    collectFields(body);
+    const s = await api("POST", "/sandboxes", body);
+    note(`created ${s.id} (${s.status})`);
+    refresh();
+    const poll = setInterval(async () => {
+      const cur = await api("GET", `/sandboxes/${s.id}?owner_id=${encodeURIComponent(owner())}`).catch(() => null);
+      if (!cur) return;
+      if (cur.status === "running") { clearInterval(poll); attach(s.id); }
+      if (cur.status === "ended") { clearInterval(poll); note(`ended: ${cur.ended_reason} ${cur.ended_detail || ""}`, "31"); refresh(); }
+    }, 1000);
+  } catch (e) { $("createMsg").textContent = e.message; }
+};
+$("kill").onclick = async () => {
+  if (!sid) return;
+  await api("DELETE", `/sandboxes/${sid}?owner_id=${encodeURIComponent(owner())}`).catch((e) => alert(e.message));
+  refresh();
+};
+$("preview").onclick = async () => {
+  if (!sid) return;
+  try {
+    const { url } = await api("POST", `/sandboxes/${sid}/preview-token`, { owner_id: owner(), port: Number($("port").value) });
+    window.open(url, "_blank");
+  } catch (e) { alert(e.message); }
+};
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 # services.sandboxd.api — the control plane. Every option is one SANDBOXD_* variable from
-# apps/api/src/config.ts; secrets (SANDBOXD_SERVICE_TOKEN, SANDBOXD_SECRET, SANDBOXD_LLM_*,
+# internal/cp/config.go; secrets (SANDBOXD_SERVICE_TOKEN, SANDBOXD_SECRET, SANDBOXD_LLM_*,
 # SANDBOXD_SANDBOX_ENV_*) come from environmentFile and never touch the store.
 {
   config,
@@ -78,7 +78,9 @@ in
         StateDirectoryMode = "0700";
         Restart = "always";
         RestartSec = 2;
-        # No MemoryDenyWriteExecute: Bun's JIT needs W^X toggling.
+        # A static Go binary never maps a page writable and executable; the TypeScript
+        # daemon it replaced needed W^X toggling for Bun's JIT and could not have this.
+        MemoryDenyWriteExecute = true;
         NoNewPrivileges = true;
         PrivateTmp = true;
         PrivateDevices = true;
