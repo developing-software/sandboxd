@@ -87,7 +87,8 @@ UI: `SANDBOXD_API_URL` (http://localhost:8080), `SANDBOXD_UI_PORT` (8081), `SAND
 Worker: `SANDBOXD_URL` (the API, ws://…), `SANDBOXD_WORKER_NAME`, `SANDBOXD_WORKER_MAX_SESSIONS`,
 `SANDBOXD_WORKER_CONFIG`, `SANDBOXD_WORKER_ENTRY`.
 
-Schema changes are not migrated in v1: if the API refuses to start, delete `.data/cp.db*`.
+Schema changes are not migrated in v1: a db from another version is wiped at boot, with a
+warning in the log. Hosts re-enroll on their next hello; sessions are gone.
 
 ## Working on it
 

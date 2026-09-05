@@ -264,12 +264,15 @@ hosts    (id, name, fingerprint UNIQUE, status pending|approved|revoked,
 sessions (id, owner_id, host_id NULL, status, ended_reason NULL, ended_detail NULL,
           image, cmd NULL (JSON string[]), env (JSON object), idle_timeout_s,
           created_at, started_at, ended_at, unknown_since NULL)
-PRAGMA user_version = 5   -- no migrations in v1; another version is refused at boot
+PRAGMA user_version = 5   -- no migrations in v1; another version is wiped at boot (revised 2026-09-04)
 ```
 
 No terminal bytes. No secrets. Queue position is derived from `created_at`
 among `queued` rows. Because secrets are never persisted, `queued` sessions cannot
 survive a CP restart: on boot they are marked `ended/failed` and must be recreated.
+A db from another schema version is dropped and recreated with a warning, not refused:
+every row is disposable (sessions are ephemeral, hosts re-enroll on their next hello),
+and a deployed unit under `Restart=always` must never crash-loop on a version bump.
 
 ## Repo layout
 
