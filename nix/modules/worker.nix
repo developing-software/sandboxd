@@ -37,6 +37,19 @@ in
       default = [ "/usr/local/bin/sandboxd-entry" ];
       description = "Command exec'd in the PTY inside every sandbox (SANDBOXD_WORKER_ENTRY).";
     };
+    tags = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [
+        "virt:vm"
+        "region:eu"
+      ];
+      description = ''
+        Host tags a sandbox may require (SANDBOXD_WORKER_TAGS). Opaque strings compared by
+        set containment; `key:value` is a convention, not a schema. `arch:`, `os:` and
+        `driver:` are reported without being configured.
+      '';
+    };
     extraEnv = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -69,6 +82,7 @@ in
         SANDBOXD_WORKER_ENTRY = builtins.toJSON cfg.entry;
         DOCKER_SOCK = "/var/run/docker.sock";
       }
+      // lib.optionalAttrs (cfg.tags != [ ]) { SANDBOXD_WORKER_TAGS = lib.concatStringsSep "," cfg.tags; }
       // lib.optionalAttrs (cfg.name != null) { SANDBOXD_WORKER_NAME = cfg.name; }
       // cfg.extraEnv;
       serviceConfig = {
@@ -86,6 +100,9 @@ in
         ProtectHome = true;
         ProtectKernelTunables = true;
         ProtectControlGroups = true;
+        # A static Go binary never maps a page writable and executable; the TypeScript
+        # daemon it replaced needed W^X toggling for Bun's JIT and could not have this.
+        MemoryDenyWriteExecute = true;
         LockPersonality = true;
       };
     };

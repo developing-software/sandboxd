@@ -1,0 +1,53 @@
+{
+  "note": "frozen from the TypeScript implementation, PLAN.md phase 1. Do not edit.",
+  "cases": [
+    {
+      "name": "empty payload, stream 1",
+      "stream": 1,
+      "payload": "",
+      "encoded": "00000001"
+    },
+    {
+      "name": "stream 0",
+      "stream": 0,
+      "payload": "68656c6c6f",
+      "encoded": "0000000068656c6c6f"
+    },
+    {
+      "name": "ascii",
+      "stream": 3,
+      "payload": "68656c6c6f20776f726c64",
+      "encoded": "0000000368656c6c6f20776f726c64"
+    },
+    {
+      "name": "nul and high bytes",
+      "stream": 5,
+      "payload": "00ff007f80",
+      "encoded": "0000000500ff007f80"
+    },
+    {
+      "name": "max stream id",
+      "stream": 4294967295,
+      "payload": "61",
+      "encoded": "ffffffff61"
+    },
+    {
+      "name": "high bit stream id",
+      "stream": 2147483649,
+      "payload": "6162",
+      "encoded": "800000016162"
+    },
+    {
+      "name": "odd stream, cp allocated",
+      "stream": 4242424241,
+      "payload": "0102030405060708090a",
+      "encoded": "fcde41b10102030405060708090a"
+    },
+    {
+      "name": "1 KiB",
+      "stream": 7,
+      "payload": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+      "encoded": "00000007abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+    }
+  ]
+}

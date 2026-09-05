@@ -1,0 +1,83 @@
+{
+  "note": "frozen from the TypeScript implementation, PLAN.md phase 1. Do not edit.",
+  "ids": [
+    {
+      "name": "1 byte, seed 0",
+      "bytes": "00",
+      "encoded": "aa"
+    },
+    {
+      "name": "1 byte, seed 1",
+      "bytes": "01",
+      "encoded": "ae"
+    },
+    {
+      "name": "1 byte, seed 200",
+      "bytes": "c8",
+      "encoded": "za"
+    },
+    {
+      "name": "5 bytes, one full group, seed 0",
+      "bytes": "00254a6f94",
+      "encoded": "aasuu34u"
+    },
+    {
+      "name": "5 bytes, one full group, seed 1",
+      "bytes": "01264b7095",
+      "encoded": "aetew4ev"
+    },
+    {
+      "name": "5 bytes, one full group, seed 200",
+      "bytes": "c8ed12375c",
+      "encoded": "zdwren24"
+    },
+    {
+      "name": "16 bytes, a sandbox id, seed 0",
+      "bytes": "00254a6f94b9de03284d7297bce1062b",
+      "encoded": "aasuu34uxhpagkcnokl3zyigfm"
+    },
+    {
+      "name": "16 bytes, a sandbox id, seed 1",
+      "bytes": "01264b7095badf04294e7398bde2072c",
+      "encoded": "aetew4evxlpqikkoooml3yqhfq"
+    },
+    {
+      "name": "16 bytes, a sandbox id, seed 200",
+      "bytes": "c8ed12375c81a6cbf0153a5f84a9cef3",
+      "encoded": "zdwren24qgtmx4avhjpyjkoo6m"
+    },
+    {
+      "name": "32 bytes, the worker secret, seed 0",
+      "bytes": "00254a6f94b9de03284d7297bce1062b50759abfe4092e53789dc2e70c31567b",
+      "encoded": "aasuu34uxhpagkcnokl3zyigfnihlgv74qes4u3ytxboodbrkz5q"
+    },
+    {
+      "name": "32 bytes, the worker secret, seed 1",
+      "bytes": "01264b7095badf04294e7398bde2072c51769bc0e50a2f54799ec3e80d32577c",
+      "encoded": "aetew4evxlpqikkoooml3yqhfrixng6a4ufc6vdzt3b6qdjsk56a"
+    },
+    {
+      "name": "32 bytes, the worker secret, seed 200",
+      "bytes": "c8ed12375c81a6cbf0153a5f84a9cef3183d6287acd1f61b40658aafd4f91e43",
+      "encoded": "zdwren24qgtmx4avhjpyjkoo6mmd2yuhvti7mg2amwfk7vhzdzbq"
+    }
+  ],
+  "codes": [
+    {
+      "bytes": "00254a6f0025",
+      "code": "AFLR-AF"
+    },
+    {
+      "bytes": "01264b700126",
+      "code": "BGMS-BG"
+    },
+    {
+      "bytes": "072c5176072c",
+      "code": "HNTY-HN"
+    },
+    {
+      "bytes": "c8ed1237c8ed",
+      "code": "JPUZ-JP"
+    }
+  ]
+}

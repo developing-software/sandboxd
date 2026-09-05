@@ -12,10 +12,6 @@
     systems.url = "github:nix-systems/default-linux";
     # Same branch as the official NixOS AMIs (nixos/26.05*) the AWS modules boot.
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    bun2nix = {
-      url = "github:nix-community/bun2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -27,7 +23,6 @@
       self,
       nixpkgs,
       systems,
-      bun2nix,
       disko,
     }:
     let
@@ -56,9 +51,7 @@
       packages = forAllSystems (
         system: pkgs:
         let
-          built = pkgs.callPackage ./nix/packages.nix {
-            bun2nix = bun2nix.packages.${system}.default;
-          };
+          built = pkgs.callPackage ./nix/packages.nix { };
         in
         {
           inherit (built) api worker;
@@ -143,18 +136,19 @@
       devShells = forAllSystems (
         system: pkgs: {
           default = pkgs.mkShell {
-            packages =
-              with pkgs;
-              [
-                bun
-                nodejs_24
-                opentofu
-                nixos-anywhere
-                awscli2
-              ]
-              ++ [
-                bun2nix.packages.${system}.default
-              ];
+            packages = with pkgs; [
+              # The one example client and its preset tooling.
+              bun
+              nodejs_24
+              # The two daemons: compiler, LSP, linter, formatter.
+              go
+              gopls
+              golangci-lint
+              gofumpt
+              opentofu
+              nixos-anywhere
+              awscli2
+            ];
           };
         }
       );

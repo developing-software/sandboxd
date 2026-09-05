@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "node"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "warn",
+    "style": "off",
+    "restriction": "off"
+  },
+  "env": { "builtin": true, "es2024": true },
+  "rules": {
+    // A namespace merged with the type or class of the same name is the house style, not a
+    // redeclaration (AGENTS.md, "Style").
+    "no-redeclare": "off",
+    // The regexes here match ASCII preset names and env names; the `u` flag buys nothing.
+    "require-unicode-regexp": "off",
+    // A negated `!== undefined` guard reads better than the inverted form the rule wants.
+    "no-negated-condition": "off",
+    "unicorn/no-negated-condition": "off",
+    // The preset loader reads one directory at a time and reports the first bad file by
+    // name. Sequential awaits are the point, not an oversight.
+    "no-await-in-loop": "off",
+    // Flags test-local helpers that belong to the one test using them.
+    "unicorn/consistent-function-scoping": "off"
+  },
+  "overrides": [
+    {
+      // A `describe` block is a function to the linter but a file section to a reader.
+      "files": ["**/*.test.ts"],
+      "rules": { "max-lines-per-function": "off" }
+    }
+  ],
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**"]
+}
