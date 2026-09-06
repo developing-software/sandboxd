@@ -34,17 +34,26 @@ module "api" {
   env               = local.api_env
 }
 
+# One block for the whole fleet. A worker reports `arch:` itself (decision 8), so a host
+# needs no configuration to be selectable: every one here enrols with the same join token,
+# generates its own secret, and the scheduler places an `arch:amd64` sandbox on the t3 and
+# an `arch:arm64` one on the t4g. Adding a host is a `workers` entry: everything a host is
+# named after is derived from `name`, so there is no second place to edit.
 module "worker" {
   source = "../../modules/worker"
+  # Keyed by name rather than position, so removing a worker does not renumber — and so
+  # does not replace — the ones after it.
+  for_each = { for w in var.workers : w.name => w }
 
   flake                = local.flake
-  architecture         = var.architecture
-  instance_type        = var.worker_instance_type
+  architecture         = each.value.architecture
+  instance_type        = each.value.instance_type
+  name                 = "sandboxd-worker-${each.key}"
   allowed_ssh_cidrs    = var.allowed_ssh_cidrs
   admin_user           = var.admin_user
   ssh_public_keys      = var.ssh_public_keys
   ssh_private_key_file = var.ssh_private_key_file
-  tailscale_host       = var.tailnet == "" ? "" : "sandboxd-worker.${var.tailnet}"
+  tailscale_host       = var.tailnet == "" ? "" : "sandboxd-worker-${each.key}.${var.tailnet}"
 
   api_hostname = var.domain
   env          = local.join_env
@@ -76,6 +85,14 @@ output "api_ip" {
   value = module.api.ip
 }
 
-output "worker_ip" {
-  value = module.worker.ip
+# One entry per worker rather than an output per host: the fleet is a list that grows, and
+# the architecture is what you look one up by (it is the `arch:` tag a sandbox asks for).
+output "workers" {
+  value = [
+    for w in var.workers : {
+      name = w.name
+      arch = w.architecture
+      ip   = module.worker[w.name].ip
+    }
+  ]
 }

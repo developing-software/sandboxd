@@ -10,7 +10,7 @@ variable "region" {
 }
 
 variable "architecture" {
-  description = "arm64 (t4g) or x86_64 (t3). An arm64 closure needs an aarch64 builder or binfmt on the machine running tofu."
+  description = "The control plane's: arm64 (t4g) or x86_64 (t3). Workers carry their own, in `workers`. An arm64 closure needs an aarch64 builder or binfmt on the machine running tofu."
   type        = string
   default     = "arm64"
 }
@@ -20,9 +20,19 @@ variable "api_instance_type" {
   default = "t4g.micro"
 }
 
-variable "worker_instance_type" {
-  type    = string
-  default = "t4g.medium"
+# One entry per worker host. `name` becomes `sandboxd-worker-<name>` and is free, so two of
+# the same architecture are two entries. `architecture` is the AMI's word for it, while the
+# host reports Go's — an x86_64 worker answers to `arch:amd64` in a sandbox's tags.
+variable "workers" {
+  type = list(object({
+    name          = string
+    architecture  = string
+    instance_type = string
+  }))
+  default = [
+    { name = "arm64", architecture = "arm64", instance_type = "t4g.medium" },
+    { name = "amd64", architecture = "x86_64", instance_type = "t3.medium" },
+  ]
 }
 
 variable "allowed_ssh_cidrs" {

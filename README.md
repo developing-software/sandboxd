@@ -28,8 +28,8 @@ Docker must be running on the machine that acts as a worker. Neither toolchain i
 `nix develop --command`.
 
 ```bash
-(cd examples/ui && bun install && bun run image)   # one image per preset
-go run ./scripts/dev                               # api :8080, ui :8081, a worker here
+(cd examples/ui && bun install)   # the sandbox images are pulled, not built
+go run ./scripts/dev              # api :8080, ui :8081, a worker here
 ```
 
 Open <http://localhost:8081/hosts>. The worker shows up as a card marked **pending** with
@@ -52,9 +52,15 @@ deployed control plane.
 | `notebook`     | JupyterLab on the stock docker-stacks image; nothing to build                |
 | `custom`       | Nothing implied: your image, your command, your env                          |
 
-A preset is a folder under `examples/ui/presets/` with a `preset.yaml`, a `Dockerfile`
-and an entry script, so adding one is adding a folder. [Sandboxes](docs/sandboxes.md)
-covers presets, images and commands, host tags, previews and how a sandbox ends.
+A preset is one `preset.yaml` under `examples/ui/presets/`: it names an image and maps
+request fields onto that image's env. The images live in [`images/`](images/README.md) and
+are published to GHCR, so nothing has to be built to run any of the above.
+[Sandboxes](docs/sandboxes.md) covers presets, images and commands, host tags, previews and
+how a sandbox ends.
+
+Inside the `agent` image, a *harness* is a file too: one `.sh` per agent in
+[`images/agent/agents/`](images/agent/agents/README.md), discovered at start-up, so
+teaching it a new one is neither an API change nor a client change.
 
 ## Two ways in
 
