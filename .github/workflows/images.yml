@@ -56,14 +56,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `latest` is main only: examples/ui/presets/*/preset.yaml names that tag, so it has
-      # to mean the release branch and not whatever dev last pushed.
+      # `latest` follows the default branch (`dev` today), because that is the tag every
+      # examples/ui/presets/*/preset.yaml names and a preset has to resolve to something
+      # that exists. The cost is real and deliberate: a push to the default branch moves
+      # what every worker pulls on its next miss. Pin a `sha-` tag in a preset to opt out.
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/sandboxd-${{ matrix.image }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
