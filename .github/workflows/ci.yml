@@ -9,7 +9,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Go is the product; examples/ui is a client of a documented API and gates only itself.
+# Go is the product; sdk/typescript and examples/ui are clients of a documented API and
+# gate only themselves. The Go job already fails when openapi.json is stale.
 jobs:
   # `golangci-lint fmt --diff` is the gofumpt check, so the formatter is pinned by the
   # linter and not installed twice.
@@ -29,6 +30,23 @@ jobs:
       - name: gofumpt
         run: golangci-lint fmt --diff
       - run: go test -race ./...
+
+  sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run fmt:check
+      - run: bun run lint
+      - run: bun run typecheck
+      # src/generated is checked in so a consumer needs no codegen. Regenerating it must
+      # be a no-op, or the output and the document have drifted.
+      - name: generated output is current
+        run: bun run generate && git diff --exit-code src/generated
 
   ui:
     runs-on: ubuntu-latest

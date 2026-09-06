@@ -44,6 +44,7 @@ as `depguard` rules, enforced by `golangci-lint`.
 | `go vet ./...`                 |                                                                 |
 | `golangci-lint run`            | Lint, including the `depguard` import boundary                  |
 | `golangci-lint fmt`            | `gofumpt`, run through the linter so the version is pinned once |
+| `go run ./scripts/openapi -o openapi.json` | Refresh the document after changing a handler       |
 | `go run ./scripts/dev`         | API, worker and UI together [DO NOT RUN unless the user asks]   |
 | `go run ./cmd/sandboxd-api`    | Control plane [DO NOT RUN unless the user asks]                 |
 | `go run ./cmd/sandboxd-worker` | A worker on this machine [DO NOT RUN unless the user asks]      |
@@ -58,7 +59,12 @@ Neither toolchain is on `PATH` outside the devShell: `nix develop --command <cmd
 Before handing work back:
 `golangci-lint fmt && go vet ./... && golangci-lint run && go test ./...`.
 
-**That is the gate.** `examples/ui` has its own, in its own `AGENTS.md`, and CI runs both.
+**That is the gate.** `sdk/typescript` and `examples/ui` have their own; CI runs all three.
+
+A change to a request or response type is three steps, in order: the Go struct in
+`internal/cp/api.go`, then `go run ./scripts/openapi -o openapi.json`, then
+`bun run generate` in `sdk/typescript`. `internal/cp/http/spec_test.go` fails if you stop
+after the first, and CI fails if you stop after the second.
 
 ## Go
 

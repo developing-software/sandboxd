@@ -1,12 +1,13 @@
 # ui
 
-The reference client, and the only TypeScript left in the repo. It plays the parent app:
-holds the service token, resolves presets, serves the xterm.js page, and turns a friendly
-request into the API's generic one.
+The reference client. It plays the parent app: holds the service token, resolves presets,
+serves the xterm.js page, and turns a friendly request into the API's generic one.
 
-It is a **client of a documented API**, not part of the product. It imports nothing from
-the repo, has its own `package.json`, `tsconfig.json` and linter config, and can rot a
-release behind the daemons without blocking anything.
+It is a **client of a documented API**, not part of the product. It has its own
+`package.json`, `tsconfig.json` and linter config, and can rot a release behind the
+daemons without blocking anything. The one thing it imports from the repo is
+`@sandboxd/sdk` (`sdk/typescript`), the generated client — which is the point: this app is
+the proof that the published SDK is usable.
 
 - `src/app.ts` — Hono: `/`, `/presets`, `POST /sandboxes`, and a forwarder for everything
   else that adds the service token. The browser never holds the token.
@@ -18,9 +19,11 @@ release behind the daemons without blocking anything.
 
 ## Rules
 
-- **The API is called with `fetch`.** The request and response shapes are declared here,
-  in `src/sandboxes.ts`. `bun x openapi-typescript http://localhost:8080/openapi.json`
-  generates them properly the day this file grows past a few types.
+- **Typed calls go through `@sandboxd/sdk`; the rest is a byte proxy.** `POST /sandboxes`
+  is the one request this app builds, so it uses the SDK's `createSandbox` and its
+  `CreateSandbox` type. Everything else is forwarded with `fetch`, status and body
+  untouched — a proxy has no opinion about shapes, and typing them would only rot.
+  A type this app needs comes from the SDK; never re-declare one here.
 - **Validation of what the API owns stays in the API.** This app checks what only it can
   know: preset fields. Image, command, env and tags go through untouched.
 - **Presets are data.** Nothing preset-specific belongs in TypeScript. A malformed
