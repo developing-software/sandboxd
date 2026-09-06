@@ -45,6 +45,9 @@ jobs:
         image: [agent, vscode, jupyter]
     steps:
       - uses: actions/checkout@v4
+      # The fleet is Graviton (t4g) with no binfmt of its own, and this runner is amd64:
+      # without qemu here the arm64 half of the matrix below cannot be built at all.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       # A pull request from a fork has no package write, and publishing an unreviewed
@@ -71,9 +74,12 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
 
+      # Both architectures, always: the workers are arm64 and an amd64-only manifest gets
+      # as far as `running` there before the entry fails to exec (DESIGN.md decision 15).
       - uses: docker/build-push-action@v6
         with:
           context: images/${{ matrix.image }}
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

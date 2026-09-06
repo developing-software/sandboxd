@@ -33,6 +33,11 @@ The shipped presets name `:latest`, so a worker with no local build pulls withou
 preparing it. That means a merge to the default branch moves what every worker gets on its
 next miss — deliberate, and the reason `sha-` exists: point a `preset.yaml` at one to pin.
 
+Every tag is a manifest list covering **`linux/amd64` and `linux/arm64`**: the workers are
+Graviton and an amd64-only image reaches `running` there before failing (DESIGN.md
+decision 15). A local `docker build` produces only the host's own architecture, which is
+fine on that host and wrong to push under a published tag.
+
 ## Making a new one public (once, by hand)
 
 **A package pushed by CI is private, and a public repository does not make it public** — a

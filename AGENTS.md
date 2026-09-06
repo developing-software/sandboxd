@@ -29,7 +29,9 @@ nothing from here but that SDK (`DESIGN.md` decisions 16, 17, 18, 22 and 27).
 | `scripts/dev`           | `go run ./scripts/dev` — the whole stack in one terminal. Not shipped.            |
 | `sdk/typescript`        | `@sandboxd/sdk`. `src/generated` is hey-api's output; `src/index.ts` is ours.     |
 | `examples/ui`           | The reference client: service token, presets, the xterm.js page. Its own `AGENTS.md`. |
-| `examples/ui/presets`   | Data. One folder per preset with its Dockerfile. Built by `bun run image` there.   |
+| `examples/ui/presets`   | Data. One `preset.yaml` per preset, naming an image in `images/`. Builds nothing.  |
+| `images`                | The official sandbox images: `agent`, `vscode`, `jupyter`. Published to GHCR by CI. |
+| `images/agent/agents`   | One `.sh` per coding agent, discovered by the entry. Its `README.md` is the contract. |
 
 `cp` and `worker` only meet on the wire: both import `wire`, neither imports the other,
 and `wire` imports nothing of ours. `cp` never imports its own subpackages — it declares
