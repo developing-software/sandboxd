@@ -46,11 +46,11 @@ and no `attach()` function is exported: mint a token and open `wss_url`.
 
 ## What is generated
 
-| Path                | What                                                                |
-| ------------------- | -------------------------------------------------------------------- |
-| `src/generated/`    | hey-api's output. Never edited; the formatter and linter ignore it   |
-| `src/index.ts`      | Hand-written. The client factory, and the only thing a caller sees   |
-| `openapi-ts.config.ts` | The generator's config                                            |
+| Path                   | What                                                               |
+| ---------------------- | ------------------------------------------------------------------ |
+| `src/generated/`       | hey-api's output. Never edited; the formatter and linter ignore it |
+| `src/index.ts`         | Hand-written. The client factory, and the only thing a caller sees |
+| `openapi-ts.config.ts` | The generator's config                                             |
 
 ```bash
 go run ./scripts/openapi -o openapi.json   # from the repo root, after changing a handler

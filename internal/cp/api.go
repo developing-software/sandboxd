@@ -70,10 +70,10 @@ type HostView struct {
 	// Absent rather than null, the one exception to the rule above: huma refuses to type
 	// a nullable object reference, so `"capacity": null` would reach a generated client
 	// as a non-null field. `online` already says whether there is a number to read.
-	Capacity *Capacity `json:"capacity,omitempty" doc:"Only while online."`
-	Tags        []string         `json:"tags" doc:"What this host reported in its last hello."`
-	LastSeenAt  *int64           `json:"last_seen_at"`
-	CreatedAt   int64            `json:"created_at"`
+	Capacity   *Capacity `json:"capacity,omitempty" doc:"Only while online."`
+	Tags       []string  `json:"tags" doc:"What this host reported in its last hello."`
+	LastSeenAt *int64    `json:"last_seen_at"`
+	CreatedAt  int64     `json:"created_at"`
 }
 
 // AttachToken opens one browser terminal on one sandbox.
