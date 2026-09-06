@@ -2,7 +2,7 @@
 // the validation are generated from the two documents in `api/`: this package supplies the
 // two `Handler` implementations, the credential check, and the mapping from a use case's
 // error to a status code. Nothing below it knows a status code.
-package http
+package server
 
 import (
 	"context"
@@ -12,10 +12,10 @@ import (
 	"strconv"
 
 	"sandboxd/api"
-	"sandboxd/internal/adminapi"
+	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/preview"
-	"sandboxd/internal/openapi"
+	"sandboxd/internal/gen/clientapi"
 	"sandboxd/internal/wire"
 )
 
@@ -23,12 +23,12 @@ import (
 // one stays a transport and nothing more.
 type (
 	sandboxAPI interface {
-		Create(ctx context.Context, ownerID string, b *openapi.CreateSandbox) (*openapi.SandboxView, error)
-		List(ownerID string) ([]openapi.SandboxView, error)
-		Get(sid, ownerID string) (*openapi.SandboxView, error)
-		Cancel(ctx context.Context, sid, ownerID string) (*openapi.SandboxView, error)
-		Terminal(sid, ownerID string) (*openapi.Link, error)
-		Preview(sid, ownerID string, port int) (*openapi.Link, error)
+		Create(ctx context.Context, ownerID string, b *clientapi.CreateSandbox) (*clientapi.SandboxView, error)
+		List(ownerID string) ([]clientapi.SandboxView, error)
+		Get(sid, ownerID string) (*clientapi.SandboxView, error)
+		Cancel(ctx context.Context, sid, ownerID string) (*clientapi.SandboxView, error)
+		Terminal(sid, ownerID string) (*clientapi.Link, error)
+		Preview(sid, ownerID string, port int) (*clientapi.Link, error)
 	}
 	hostAPI interface {
 		List() ([]adminapi.HostView, error)
@@ -74,11 +74,11 @@ func New(d Deps) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := openapi.NewServer(
+	client, err := clientapi.NewServer(
 		&sandboxHandler{sandboxes: d.Sandboxes, log: d.Log},
 		clientAuth{token: d.ServiceToken},
-		openapi.WithNotFound(admin.ServeHTTP),
-		openapi.WithErrorHandler(clientErrors(d.Log)),
+		clientapi.WithNotFound(admin.ServeHTTP),
+		clientapi.WithErrorHandler(clientErrors(d.Log)),
 	)
 	if err != nil {
 		return nil, err

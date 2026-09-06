@@ -31,7 +31,7 @@ func TestTokensReject(t *testing.T) {
 	}{
 		"another secret":  {NewTokens("other"), token},
 		"tampered body":   {tk, body + "x." + sig},
-		"tampered sig":    {tk, body + "." + flipLast(sig)},
+		"tampered sig":    {tk, body + "." + flipFirst(sig)},
 		"no signature":    {tk, body},
 		"empty":           {tk, ""},
 		"garbage":         {tk, "garbage"},
@@ -46,13 +46,18 @@ func TestTokensReject(t *testing.T) {
 	}
 }
 
-// flipLast changes the final character to a different one, so a signature is always
+// flipFirst changes the leading character to a different one, so a signature is always
 // altered — picking a fixed letter would leave it untouched one time in sixty-four.
-func flipLast(s string) string {
-	if s[len(s)-1] == 'A' {
-		return s[:len(s)-1] + "B"
+//
+// The first and not the last: an HMAC-SHA256 is 32 bytes, which base64url encodes as 43
+// characters carrying 258 bits, so the final character's low two bits are padding that the
+// decoder discards. Changing "A" to "B" there decodes to the very same 32 bytes, and the
+// case verified rather than failed about one run in sixteen.
+func flipFirst(s string) string {
+	if s[0] == 'A' {
+		return "B" + s[1:]
 	}
-	return s[:len(s)-1] + "A"
+	return "A" + s[1:]
 }
 
 func TestTokensCarryThePort(t *testing.T) {

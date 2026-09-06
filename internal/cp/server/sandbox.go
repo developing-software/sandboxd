@@ -1,14 +1,14 @@
-package http
+package server
 
 import (
 	"context"
 	"errors"
 	"log/slog"
 
-	"sandboxd/internal/openapi"
+	"sandboxd/internal/gen/clientapi"
 )
 
-// The client contract's handler: `api/client.yaml` → `internal/openapi` → this.
+// The client contract's handler: `api/client.yaml` → `internal/gen/clientapi` → this.
 //
 // Every method here is a forward. The decoding, the validation and the status of a
 // successful response are generated from the document, and the status of a failure is
@@ -19,45 +19,45 @@ type sandboxHandler struct {
 	log       *slog.Logger
 }
 
-var _ openapi.Handler = (*sandboxHandler)(nil)
+var _ clientapi.Handler = (*sandboxHandler)(nil)
 
-func (h *sandboxHandler) Healthz(context.Context) (*openapi.Health, error) {
-	return &openapi.Health{Ok: true}, nil
+func (h *sandboxHandler) Healthz(context.Context) (*clientapi.Health, error) {
+	return &clientapi.Health{Ok: true}, nil
 }
 
 func (h *sandboxHandler) CreateSandbox(
-	ctx context.Context, req *openapi.CreateSandbox, p openapi.CreateSandboxParams,
-) (*openapi.SandboxView, error) {
+	ctx context.Context, req *clientapi.CreateSandbox, p clientapi.CreateSandboxParams,
+) (*clientapi.SandboxView, error) {
 	return h.sandboxes.Create(ctx, p.XSandboxdOwner, req)
 }
 
 func (h *sandboxHandler) ListSandboxes(
-	_ context.Context, p openapi.ListSandboxesParams,
-) ([]openapi.SandboxView, error) {
+	_ context.Context, p clientapi.ListSandboxesParams,
+) ([]clientapi.SandboxView, error) {
 	return h.sandboxes.List(p.XSandboxdOwner)
 }
 
 func (h *sandboxHandler) GetSandbox(
-	_ context.Context, p openapi.GetSandboxParams,
-) (*openapi.SandboxView, error) {
+	_ context.Context, p clientapi.GetSandboxParams,
+) (*clientapi.SandboxView, error) {
 	return h.sandboxes.Get(p.ID, p.XSandboxdOwner)
 }
 
 func (h *sandboxHandler) EndSandbox(
-	ctx context.Context, p openapi.EndSandboxParams,
-) (*openapi.SandboxView, error) {
+	ctx context.Context, p clientapi.EndSandboxParams,
+) (*clientapi.SandboxView, error) {
 	return h.sandboxes.Cancel(ctx, p.ID, p.XSandboxdOwner)
 }
 
 func (h *sandboxHandler) OpenTerminal(
-	_ context.Context, p openapi.OpenTerminalParams,
-) (*openapi.Link, error) {
+	_ context.Context, p clientapi.OpenTerminalParams,
+) (*clientapi.Link, error) {
 	return h.sandboxes.Terminal(p.ID, p.XSandboxdOwner)
 }
 
 func (h *sandboxHandler) OpenPreview(
-	_ context.Context, req *openapi.PreviewBody, p openapi.OpenPreviewParams,
-) (*openapi.Link, error) {
+	_ context.Context, req *clientapi.PreviewBody, p clientapi.OpenPreviewParams,
+) (*clientapi.Link, error) {
 	return h.sandboxes.Preview(p.ID, p.XSandboxdOwner, req.Port)
 }
 
@@ -69,6 +69,6 @@ var errNotRouted = errors.New("http: the terminal socket is served by net/http, 
 // signature has not got. The method exists because the operation is in the document, and
 // the compiler is what keeps those two facts from drifting apart — delete the operation
 // and this stops building.
-func (h *sandboxHandler) AttachTerminal(context.Context, openapi.AttachTerminalParams) error {
+func (h *sandboxHandler) AttachTerminal(context.Context, clientapi.AttachTerminalParams) error {
 	return errNotRouted
 }

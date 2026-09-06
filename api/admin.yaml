@@ -5,7 +5,7 @@
 # This one is not: it is read by whoever operates the fleet, it has no published client,
 # and it is free to break whenever the operator surface is better for it.
 #
-#   internal/adminapi  ogen's server and types  (go generate ./...)
+#   internal/gen/adminapi  ogen's server and types  (go generate ./...)
 #
 # No TypeScript SDK is generated from this file. `examples/ui` generates its own types
 # locally if it wants them, which puts the churn where the churn is tolerated.

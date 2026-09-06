@@ -22,11 +22,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # internal/openapi and internal/adminapi are checked in so a build needs no
+      # internal/gen is checked in so a build needs no
       # generator. ogen is a `tool` in go.mod, so this needs nothing installed — and the
       # version is pinned there, which is what makes the diff below mean anything.
       - name: generated servers are current
-        run: go generate ./... && git diff --exit-code internal/openapi internal/adminapi
+        run: go generate ./... && git diff --exit-code internal/gen
       - run: go build ./...
       - run: go vet ./...
       - uses: golangci/golangci-lint-action@v8
@@ -63,6 +63,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      # src/admin is this app's own generated client for api/admin.yaml — the fleet has no
+      # published SDK, so the one client that wants it generates it here (decision 27).
+      - name: generated admin client is current
+        run: bun run generate && git diff --exit-code src/admin
       - run: bun run fmt:check
       - run: bun run lint
       - run: bun run typecheck

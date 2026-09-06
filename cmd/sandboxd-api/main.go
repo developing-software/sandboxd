@@ -18,7 +18,7 @@ import (
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/attach"
 	"sandboxd/internal/cp/hosts"
-	cphttp "sandboxd/internal/cp/http"
+	"sandboxd/internal/cp/server"
 	"sandboxd/internal/cp/preview"
 	"sandboxd/internal/cp/store"
 )
@@ -69,7 +69,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go sched.Run(ctx)
 
 	sandboxes := cp.NewSandboxes(cfg, st, hub, sched, tokens)
-	handler, err := cphttp.New(cphttp.Deps{
+	handler, err := server.New(server.Deps{
 		ServiceToken: cfg.ServiceToken,
 		Tokens:       tokens,
 		Sandboxes:    sandboxes,

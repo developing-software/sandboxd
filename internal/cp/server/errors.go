@@ -1,4 +1,4 @@
-package http
+package server
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 	"github.com/ogen-go/ogen/ogenerrors"
 	"github.com/ogen-go/ogen/validate"
 
-	"sandboxd/internal/adminapi"
+	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
-	"sandboxd/internal/openapi"
+	"sandboxd/internal/gen/clientapi"
 )
 
 // The one place in the control plane that knows a status code. Use cases return the
@@ -126,7 +126,7 @@ func innermost(err error) error {
 
 // --- the two documents' models ---------------------------------------------------------
 
-func clientErrors(log *slog.Logger) openapi.ErrorHandler {
+func clientErrors(log *slog.Logger) clientapi.ErrorHandler {
 	return func(_ context.Context, w http.ResponseWriter, _ *http.Request, err error) {
 		write(w, problem(log, err))
 	}
@@ -138,15 +138,15 @@ func adminErrors(log *slog.Logger) adminapi.ErrorHandler {
 	}
 }
 
-func (h *sandboxHandler) NewError(_ context.Context, err error) *openapi.ErrorStatusCode {
+func (h *sandboxHandler) NewError(_ context.Context, err error) *clientapi.ErrorStatusCode {
 	f := problem(h.log, err)
-	out := &openapi.ErrorStatusCode{
+	out := &clientapi.ErrorStatusCode{
 		StatusCode: f.status,
-		Response:   openapi.ErrorModel{Error: f.message},
+		Response:   clientapi.ErrorModel{Error: f.message},
 	}
 	for _, i := range f.issues {
-		out.Response.Issues = append(out.Response.Issues, openapi.Issue{
-			Path: openapi.NewOptString(i.path), Message: i.message,
+		out.Response.Issues = append(out.Response.Issues, clientapi.Issue{
+			Path: clientapi.NewOptString(i.path), Message: i.message,
 		})
 	}
 	return out

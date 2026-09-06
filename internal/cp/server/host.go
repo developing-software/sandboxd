@@ -1,13 +1,13 @@
-package http
+package server
 
 import (
 	"context"
 	"log/slog"
 
-	"sandboxd/internal/adminapi"
+	"sandboxd/internal/gen/adminapi"
 )
 
-// The operator surface's handler: `api/admin.yaml` → `internal/adminapi` → this. Approve
+// The operator surface's handler: `api/admin.yaml` → `internal/gen/adminapi` → this. Approve
 // and revoke return nothing but an error, because the document answers them 204: a
 // mutation with nothing to say says it with the status (DESIGN.md decision 25).
 type hostHandler struct {

@@ -1,4 +1,4 @@
-package http
+package server
 
 import (
 	"bytes"
@@ -16,13 +16,13 @@ import (
 	"github.com/coder/websocket"
 
 	"sandboxd/api"
-	"sandboxd/internal/adminapi"
+	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/attach"
 	"sandboxd/internal/cp/hosts"
 	"sandboxd/internal/cp/preview"
 	"sandboxd/internal/cp/store"
-	"sandboxd/internal/openapi"
+	"sandboxd/internal/gen/clientapi"
 )
 
 // The whole control plane behind an httptest.Server, with no worker connected: every
@@ -277,8 +277,8 @@ func TestSandboxLifecycle(t *testing.T) {
 	if created.status != 201 {
 		t.Fatalf("create = %d: %s", created.status, created.body)
 	}
-	v := decode[openapi.SandboxView](t, created)
-	if v.Status != openapi.SandboxViewStatusQueued {
+	v := decode[clientapi.SandboxView](t, created)
+	if v.Status != clientapi.SandboxViewStatusQueued {
 		t.Errorf("status = %s", v.Status)
 	}
 	if v.OwnerID != owner {
@@ -288,11 +288,11 @@ func TestSandboxLifecycle(t *testing.T) {
 		t.Errorf("a secret reached the database:\n%s", raw)
 	}
 
-	if list := decode[[]openapi.SandboxView](t, h.do(http.MethodGet, "/sandboxes", nil)); len(list) != 1 {
+	if list := decode[[]clientapi.SandboxView](t, h.do(http.MethodGet, "/sandboxes", nil)); len(list) != 1 {
 		t.Errorf("list = %d", len(list))
 	}
 	other := h.do(http.MethodGet, "/sandboxes", nil, "X-Sandboxd-Owner", "you")
-	if list := decode[[]openapi.SandboxView](t, other); len(list) != 0 {
+	if list := decode[[]clientapi.SandboxView](t, other); len(list) != 0 {
 		t.Errorf("another owner sees %d", len(list))
 	}
 
@@ -312,7 +312,7 @@ func TestSandboxLifecycle(t *testing.T) {
 	if previewed.status != 201 {
 		t.Fatalf("preview = %d: %s", previewed.status, previewed.body)
 	}
-	link := decode[openapi.Link](t, previewed)
+	link := decode[clientapi.Link](t, previewed)
 	want := "https://3000-" + v.ID + ".preview.example.com/?t="
 	if !strings.HasPrefix(link.URL, want) {
 		t.Errorf("url = %q, want it to start %q", link.URL, want)
@@ -332,7 +332,7 @@ func TestSandboxLifecycle(t *testing.T) {
 	}
 
 	ended := h.do(http.MethodDelete, "/sandboxes/"+v.ID, nil)
-	if got := decode[openapi.SandboxView](t, ended); got.Status != openapi.SandboxViewStatusEnded {
+	if got := decode[clientapi.SandboxView](t, ended); got.Status != clientapi.SandboxViewStatusEnded {
 		t.Errorf("delete = %s", got.Status)
 	}
 }

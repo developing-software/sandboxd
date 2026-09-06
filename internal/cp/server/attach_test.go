@@ -1,4 +1,4 @@
-package http
+package server
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"sandboxd/internal/openapi"
+	"sandboxd/internal/gen/clientapi"
 	"sandboxd/internal/wire"
 )
 
@@ -113,7 +113,7 @@ func (a *harness) terminal(sid string) string {
 	if res.status != 201 {
 		a.t.Fatalf("terminal = %d: %s", res.status, res.body)
 	}
-	link, err := url.Parse(decode[openapi.Link](a.t, res).URL)
+	link, err := url.Parse(decode[clientapi.Link](a.t, res).URL)
 	if err != nil {
 		a.t.Fatal(err)
 	}
@@ -126,12 +126,12 @@ func (a *harness) terminal(sid string) string {
 }
 
 // awaitStatus polls the API the way a client would.
-func (a *harness) awaitStatus(sid string, want openapi.SandboxViewStatus) openapi.SandboxView {
+func (a *harness) awaitStatus(sid string, want clientapi.SandboxViewStatus) clientapi.SandboxView {
 	a.t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	var last openapi.SandboxView
+	var last clientapi.SandboxView
 	for time.Now().Before(deadline) {
-		last = decode[openapi.SandboxView](a.t, a.do(http.MethodGet, "/sandboxes/"+sid, nil))
+		last = decode[clientapi.SandboxView](a.t, a.do(http.MethodGet, "/sandboxes/"+sid, nil))
 		if last.Status == want {
 			return last
 		}
@@ -152,9 +152,9 @@ func TestASandboxFromPostToKeystroke(t *testing.T) {
 	if created.status != 201 {
 		t.Fatalf("create = %d", created.status)
 	}
-	v := decode[openapi.SandboxView](t, created)
+	v := decode[clientapi.SandboxView](t, created)
 	// A host with room takes it straight away, so the caller never sees `queued`.
-	if v.Status != openapi.SandboxViewStatusCreating {
+	if v.Status != clientapi.SandboxViewStatusCreating {
 		t.Fatalf("status = %s, want it placed on the connected host", v.Status)
 	}
 
@@ -171,7 +171,7 @@ func TestASandboxFromPostToKeystroke(t *testing.T) {
 	}
 
 	w.send(&wire.SandboxStarted{SID: v.ID})
-	running := a.awaitStatus(v.ID, openapi.SandboxViewStatusRunning)
+	running := a.awaitStatus(v.ID, clientapi.SandboxViewStatusRunning)
 	if running.HostOnline.Null || !running.HostOnline.Value {
 		t.Errorf("host_online = %+v", running.HostOnline)
 	}
@@ -240,7 +240,7 @@ func TestASandboxFromPostToKeystroke(t *testing.T) {
 
 	// And the sandbox ending reaches the API.
 	w.send(&wire.SandboxEnded{SID: v.ID, Reason: wire.EndExited, Detail: "shell exited"})
-	ended := a.awaitStatus(v.ID, openapi.SandboxViewStatusEnded)
+	ended := a.awaitStatus(v.ID, clientapi.SandboxViewStatusEnded)
 	if ended.EndedReason.Null || string(ended.EndedReason.Value) != string(wire.EndExited) {
 		t.Errorf("ended_reason = %+v", ended.EndedReason)
 	}
@@ -253,13 +253,13 @@ func TestABrowserLeavingClosesItsPTY(t *testing.T) {
 	a := newHarness(t)
 	w := a.connectWorker()
 
-	v := decode[openapi.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
+	v := decode[clientapi.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
 		map[string]any{"image": "i"}))
 	if _, is := w.control().(*wire.SandboxCreate); !is {
 		t.Fatal("expected sandbox.create")
 	}
 	w.send(&wire.SandboxStarted{SID: v.ID})
-	a.awaitStatus(v.ID, openapi.SandboxViewStatusRunning)
+	a.awaitStatus(v.ID, clientapi.SandboxViewStatusRunning)
 
 	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
 	defer cancel()
@@ -300,18 +300,18 @@ func TestADeleteReachesTheWorker(t *testing.T) {
 	a := newHarness(t)
 	w := a.connectWorker()
 
-	v := decode[openapi.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
+	v := decode[clientapi.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
 		map[string]any{"image": "i"}))
 	if _, is := w.control().(*wire.SandboxCreate); !is {
 		t.Fatal("expected sandbox.create")
 	}
 	w.send(&wire.SandboxStarted{SID: v.ID})
-	a.awaitStatus(v.ID, openapi.SandboxViewStatusRunning)
+	a.awaitStatus(v.ID, clientapi.SandboxViewStatusRunning)
 
-	ended := decode[openapi.SandboxView](t,
+	ended := decode[clientapi.SandboxView](t,
 		a.do(http.MethodDelete, "/sandboxes/"+v.ID, nil))
 	// The host is online, so the row waits for it to confirm rather than lying.
-	if ended.Status != openapi.SandboxViewStatusRunning {
+	if ended.Status != clientapi.SandboxViewStatusRunning {
 		t.Errorf("status right after DELETE = %s", ended.Status)
 	}
 	msg := w.control()
@@ -320,5 +320,5 @@ func TestADeleteReachesTheWorker(t *testing.T) {
 		t.Fatalf("the worker was told %T %+v", msg, msg)
 	}
 	w.send(&wire.SandboxEnded{SID: v.ID, Reason: wire.EndClosed})
-	a.awaitStatus(v.ID, openapi.SandboxViewStatusEnded)
+	a.awaitStatus(v.ID, clientapi.SandboxViewStatusEnded)
 }

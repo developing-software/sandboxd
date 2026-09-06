@@ -28,7 +28,7 @@ let
       # The proxy rather than a vendor tree, because ogen is a `tool` in go.mod: `go mod
       # vendor` writes tool dependencies into vendor/ without marking them explicit in
       # modules.txt, and the build then refuses its own vendor directory. Nothing here
-      # runs the generator — internal/openapi and internal/adminapi are checked in — so
+      # runs the generator — internal/gen is checked in — so
       # this is the cost of pinning the generator's version beside the runtime's.
       proxyVendor = true;
       vendorHash = "sha256-+Ovr6f7IxJyBzl7ONMzoPMZQeJYvT8F83GlC6jgdHxk=";

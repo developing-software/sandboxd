@@ -20,9 +20,9 @@ linters:
           deny:
             - pkg: sandboxd/internal/cp
               desc: the control plane and the worker meet on the wire, nowhere else
-            - pkg: sandboxd/internal/openapi
+            - pkg: sandboxd/internal/gen/clientapi
               desc: the worker speaks the wire protocol, not the HTTP API
-            - pkg: sandboxd/internal/adminapi
+            - pkg: sandboxd/internal/gen/adminapi
               desc: the worker speaks the wire protocol, not the HTTP API
         cp:
           files: ['**/internal/cp/**']
@@ -36,6 +36,13 @@ linters:
               desc: wire is a leaf
             - pkg: sandboxd/internal/worker
               desc: wire is a leaf
+        # Generated code imports nothing of ours today; this is what makes that stay true if
+        # a future ogen release or config option changes it.
+        gen:
+          files: ['**/internal/gen/**']
+          deny:
+            - pkg: sandboxd/internal
+              desc: internal/gen is generated from api/ and is a leaf
         cmd-api:
           files: ['**/cmd/sandboxd-api/**']
           deny:

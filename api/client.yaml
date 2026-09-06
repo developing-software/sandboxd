@@ -1,6 +1,6 @@
 # The sandboxd control plane's client contract, and the source both generators read.
 #
-#   internal/openapi              ogen's server and types  (go generate ./...)
+#   internal/gen/clientapi        ogen's server and types  (go generate ./...)
 #   sdk/typescript/src/generated  hey-api's client         (bun run generate)
 #
 # Both are checked in and CI regenerates each and fails on a diff, so the two can only be
@@ -20,7 +20,7 @@
 # sees it: a WebSocket upgrade has no ResponseWriter to hand a generated handler.
 #
 # Errors: every operation answers `default` with an ErrorModel, and nothing enumerates
-# per-status response types. The status is chosen in one place — cp/http's error mapping,
+# per-status response types. The status is chosen in one place — cp/server's error mapping,
 # the only place in the control plane that knows one — so a use case returns a sentinel
 # and never a code. Where a status carries meaning a caller should plan for, the
 # operation's description says so in prose.

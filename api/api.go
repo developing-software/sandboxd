@@ -13,8 +13,8 @@ import _ "embed"
 // them. `-clean` empties each target first: a file left behind by a rename would still
 // compile and would still be wrong.
 //
-//go:generate go tool ogen -target ../internal/openapi -package openapi -config ogen.yml -clean client.yaml
-//go:generate go tool ogen -target ../internal/adminapi -package adminapi -config ogen.yml -clean admin.yaml
+//go:generate go tool ogen -target ../internal/gen/clientapi -package clientapi -config ogen.yml -clean client.yaml
+//go:generate go tool ogen -target ../internal/gen/adminapi -package adminapi -config ogen.yml -clean admin.yaml
 
 // Client is the contract: sandboxes, the terminal, previews, the probe. A published SDK
 // comes from it.

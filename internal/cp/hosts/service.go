@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"sandboxd/internal/adminapi"
+	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/store"
 )

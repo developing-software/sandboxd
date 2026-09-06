@@ -63,8 +63,9 @@ The UI speaks presets. The API speaks images. Your app can use either.
 ```bash
 # --- through the UI (:8081): presets, no token in the browser ---
 
-curl -s localhost:8081/api/sandboxes -H 'content-type: application/json' \
-  -d '{"owner_id":"me","repo":"https://github.com/org/repo.git","prompt":"add tests for src/x.ts"}'
+curl -s localhost:8081/api/sandboxes \
+  -H 'x-sandboxd-owner: me' -H 'content-type: application/json' \
+  -d '{"repo":"https://github.com/org/repo.git","prompt":"add tests for src/x.ts"}'
 
 curl -s localhost:8081/api/presets    # every preset's fields, image and preview port
 

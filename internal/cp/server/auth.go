@@ -1,12 +1,12 @@
-package http
+package server
 
 import (
 	"context"
 	"crypto/subtle"
 	"errors"
 
-	"sandboxd/internal/adminapi"
-	"sandboxd/internal/openapi"
+	"sandboxd/internal/gen/adminapi"
+	"sandboxd/internal/gen/clientapi"
 )
 
 // The parent app's credential. Which routes it gates is stated in the two documents —
@@ -29,7 +29,7 @@ type (
 )
 
 func (a clientAuth) HandleBearer(
-	ctx context.Context, _ openapi.OperationName, t openapi.Bearer,
+	ctx context.Context, _ clientapi.OperationName, t clientapi.Bearer,
 ) (context.Context, error) {
 	return ctx, check(a.token, t.Token)
 }
@@ -50,6 +50,6 @@ func check(expected, given string) error {
 }
 
 var (
-	_ openapi.SecurityHandler  = clientAuth{}
+	_ clientapi.SecurityHandler  = clientAuth{}
 	_ adminapi.SecurityHandler = adminAuth{}
 )

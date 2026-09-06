@@ -24,7 +24,7 @@ Two halves, composed in `src/main.ts` by one `Bun.serve`:
   `/` redirects to the list. What they share: `shell.ts` (nav, owner id, polling),
   `client.ts` (JSON over `/api`), `format.ts` (how a sandbox reads), `term.ts` (xterm.js
   on the attach socket), `style.css`.
-- **The API**, `src/api.ts` — Hono under `/api`, one generated SDK call per route.
+- **The API**, `src/api.ts` — Hono under `/api`, one generated call per route.
   `GET /api/presets` is the one route the control plane does not have, and
   `POST /api/sandboxes` the one with work of its own: it resolves a preset first. The
   browser never holds the token.
@@ -61,8 +61,8 @@ And the rest:
   `preset.yaml` is a boot error naming the file. A preset on a stock image (`ubuntu`,
   `python`, `node`, `http`, `notebook`) is a `preset.yaml` alone: `image:` names it, `cmd:` runs in
   the PTY, and `bun run image` skips the folder.
-- The pages talk to this app on the same origin, no auth header. The owner id is whatever
-  is typed in the nav, kept in localStorage.
+- The pages talk to this app on the same origin, no bearer token. The owner id is whatever
+  is typed in the nav, kept in localStorage, and sent as `X-Sandboxd-Owner`.
 
 ## Style
 
@@ -93,6 +93,7 @@ From this directory: `bun install` once, then
 | ------------------- | --------------------------------------------- |
 | `bun run dev`       | The UI on :8081, talking to the local API     |
 | `bun run image`     | One Docker image per preset with a Dockerfile |
+| `bun run generate`  | `src/admin/` from `../../api/admin.yaml`      |
 | `bun test`          |                                               |
 | `bun run typecheck` |                                               |
 | `bun run fmt`       | `oxfmt`, not Prettier                         |
