@@ -22,15 +22,37 @@ class one.
 
 ## Tags
 
-| Tag       | From                          |
-| --------- | ----------------------------- |
-| `latest`  | `main`, the release branch    |
-| `dev`     | `dev`, the working branch     |
-| `v1.2.3`, `v1.2` | a `v*` git tag         |
-| `sha-abc1234` | every published build     |
+| Tag              | From                                       |
+| ---------------- | ------------------------------------------ |
+| `latest`         | the default branch (`dev` today)           |
+| `main`, `dev`    | the branch of that name                    |
+| `v1.2.3`, `v1.2` | a `v*` git tag                             |
+| `sha-abc1234`    | every published build                      |
 
-The shipped presets name `:latest`, so a worker with no local build pulls a release. Point
-a preset at `:dev` (or a `sha-` tag) to pin one somewhere else.
+The shipped presets name `:latest`, so a worker with no local build pulls without anyone
+preparing it. That means a merge to the default branch moves what every worker gets on its
+next miss — deliberate, and the reason `sha-` exists: point a `preset.yaml` at one to pin.
+
+## Making a new one public (once, by hand)
+
+**A package pushed by CI is private, and a public repository does not make it public** — a
+linked package inherits the repository's access permissions but not its visibility. There
+is no REST endpoint for this and no workflow setting; it is the web UI, once per package,
+and it does not go back:
+
+> [Organization → Packages](https://github.com/orgs/developing-software/packages) → the
+> package → **Package settings** → Danger Zone → **Change visibility** → **Public**
+
+Set **Org Settings → Packages → Package Creation** to allow Public so the next image out
+of the matrix does not need this again.
+
+Until a package is public, a worker pulling it gets `401 Unauthorized` and the sandbox ends
+`failed` — indistinguishable from a tag that does not exist. Check with an anonymous pull:
+
+```sh
+curl -so /dev/null -w '%{http_code}\n' \
+  https://ghcr.io/v2/developing-software/sandboxd-agent/manifests/latest    # 200 = public
+```
 
 ## Building one locally
 
