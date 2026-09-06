@@ -6,9 +6,9 @@
 ## Stack
 
 **This is a Go repository.** One module, `sandboxd`, at the root: two daemons, one wire
-contract, one dev runner. The only TypeScript left is `examples/ui`, the reference client,
-which is a self-contained Bun app that imports nothing from here (`DESIGN.md` decisions
-16, 17 and 18).
+contract, two dev runners. The TypeScript is `sdk/typescript`, generated from the API's
+own OpenAPI document, and `examples/ui`, the reference client — a Bun app that imports
+nothing from here but that SDK (`DESIGN.md` decisions 16, 17, 18 and 22).
 
 | Path                    | What                                                                             |
 | ----------------------- | -------------------------------------------------------------------------------- |
@@ -24,6 +24,9 @@ which is a self-contained Bun app that imports nothing from here (`DESIGN.md` de
 | `cmd/sandboxd-api`      | Wiring only, one binary                                                          |
 | `cmd/sandboxd-worker`   | Wiring only, one binary                                                          |
 | `scripts/dev`           | `go run ./scripts/dev` — the whole stack in one terminal. Not shipped.           |
+| `scripts/openapi`       | Writes `openapi.json`. Not shipped.                                              |
+| `openapi.json`          | The document as a file. Generated and checked in; never hand-edited.             |
+| `sdk/typescript`        | `@sandboxd/sdk`. `src/generated` is hey-api's output; `src/index.ts` is ours.    |
 | `examples/ui`           | The reference client: service token, presets, the xterm.js page. Its own `AGENTS.md`. |
 | `examples/ui/presets`   | Data. One folder per preset with its Dockerfile. Built by `bun run image` there.  |
 

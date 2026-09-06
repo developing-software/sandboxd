@@ -59,6 +59,11 @@ func (s *Service) List() ([]cp.HostView, error) {
 		if capacity, ok := s.hub.Capacity(h.ID); ok {
 			v.Capacity = &capacity
 		}
+		// A host that reported no tags has an empty list, not a null one: the document
+		// says `tags` is always an array.
+		if v.Tags == nil {
+			v.Tags = []string{}
+		}
 		out = append(out, v)
 	}
 	return out, nil

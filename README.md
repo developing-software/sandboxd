@@ -1,117 +1,137 @@
 # sandboxd
 
 Run sandboxes on your own machines, supervised from a browser terminal, behind one
-control plane. A sandbox is a container from any image with a command in a PTY; presets
-turn a friendly request into one: `coding-agent` clones a repo and runs Claude Code, Codex
-or OpenCode in it; `vscode` opens the repo in VS Code (code-server) behind the preview
-proxy; `jupyter` runs JupyterLab the same way; `custom` is any image + command + env.
-See `DESIGN.md` for the full spec.
+control plane.
 
-Two static Go binaries and one example client:
+A **sandbox** is one container from any image, running one command in a PTY. You create
+it over an HTTP API, watch it in a terminal in the browser, and open any port it listens
+on through a preview proxy. It ends when the command exits, when you delete it, or when
+it goes idle. Nothing survives it except what it pushed to git.
 
-```
-cmd/sandboxd-api      the control plane: a generic JSON API (huma, OpenAPI at /doc), the
-                      worker tunnel, the attach socket and the preview proxy. Knows no presets.
-cmd/sandboxd-worker   the per-host daemon: Docker driver, PTYs, one outbound tunnel.
-internal/wire         the wire contract both sides share: messages, framing, ids.
-examples/ui           the reference client: holds the service token and the presets, serves
-                      the xterm.js page, resolves a preset, then calls the API. Bun; not shipped.
-```
+The pieces are two static Go binaries and a reference client:
+
+- **`sandboxd-api`** — the control plane. Schedules sandboxes onto your workers, holds
+  the state, serves the terminal socket and the preview proxy.
+- **`sandboxd-worker`** — one per machine you want to run sandboxes on. Dials out to the
+  control plane, so a worker needs no inbound port and no public address.
+- **`examples/ui`** — the stand-in for whatever app of yours calls the API. It holds the
+  service token, turns presets such as `coding-agent` into an image and a command, and
+  serves the xterm.js page.
+
+The API itself knows nothing about repos, agents or presets: it speaks images, commands,
+env and host tags. Everything friendlier lives in the client.
+
+## Get it running
+
+Docker must be running on the machine that acts as a worker. Neither toolchain is on
+`PATH` outside the Nix devShell: `direnv allow` once, or prefix each command with
+`nix develop --command`.
 
 ```bash
-go run ./scripts/dev   # api on :8080, ui on :8081 and a worker on this machine, one terminal
+(cd examples/ui && bun install && bun run image)   # one image per preset
+go run ./scripts/dev                               # api :8080, ui :8081, a worker here
 ```
 
-Or one at a time:
+Open <http://localhost:8081>. The worker shows up as a card marked **pending** with an
+approval code printed in the terminal — paste it into the card. Then pick the
+`coding-agent` preset, give it a repo and a prompt, and watch it work.
 
-```bash
-SANDBOXD_SERVICE_TOKEN=dev-token go run ./cmd/sandboxd-api      # state in ./.data, docs at /doc
-SANDBOXD_URL=ws://localhost:8080 go run ./cmd/sandboxd-worker   # approve it in the UI with the
-                                                                # printed code, or set the same
-                                                                # SANDBOXD_JOIN_TOKEN on both
-cd examples/ui && bun install && bun run dev                    # UI on :8081
-cd examples/ui && bun run image                                 # one image per preset
-```
+[Getting started](docs/getting-started.md) has the rest: running the three processes
+separately, skipping the approval code with a join token, and pointing a local UI at a
+deployed control plane.
 
-Open http://localhost:8081.
+## What you can run
 
-Neither toolchain is on `PATH` outside the devShell: `nix develop --command <cmd>`, or
-`direnv allow` once. `nix build .#api` and `.#worker` produce the release binaries, and
-`--system aarch64-linux` cross-compiles without a builder of that architecture.
+| Preset         | What you get                                                                  |
+| -------------- | ----------------------------------------------------------------------------- |
+| `coding-agent` | A fresh clone on its own branch, then Claude Code, Codex, OpenCode or a shell |
+| `vscode`       | VS Code (code-server) on the repo, in the browser                            |
+| `jupyter`      | JupyterLab or the classic Notebook, in the browser                           |
+| `custom`       | Nothing implied: your image, your command, your env                          |
+
+A preset is a folder under `examples/ui/presets/` with a `preset.yaml`, a `Dockerfile`
+and an entry script, so adding one is adding a folder. [Sandboxes](docs/sandboxes.md)
+covers presets, images and commands, host tags, previews and how a sandbox ends.
 
 ## Two ways in
 
-The UI speaks presets. The API speaks images. A parent app can use either.
+The UI speaks presets. The API speaks images. Your app can use either.
 
 ```bash
 # --- through the UI (:8081): presets, no token in the browser ---
 
-# coding agent (default preset when repo is given)
 curl -s localhost:8081/sandboxes -H 'content-type: application/json' \
   -d '{"owner_id":"me","repo":"https://github.com/org/repo.git","prompt":"add tests for src/x.ts"}'
 
-# vs code on a repo, previewed on port 8080 (POST /sandboxes/:id/preview-token {"owner_id":"me","port":8080})
-curl -s localhost:8081/sandboxes -H 'content-type: application/json' \
-  -d '{"owner_id":"me","preset":"vscode","repo":"https://github.com/org/repo.git"}'
+curl -s localhost:8081/presets    # every preset's fields, image and preview port
 
-# jupyterlab, previewed on port 8888 (kernel websockets go through the preview proxy)
-curl -s localhost:8081/sandboxes -H 'content-type: application/json' \
-  -d '{"owner_id":"me","preset":"jupyter","repo":"https://github.com/org/notebooks.git"}'
+# --- straight to the API (:8080): image + command + env, with the service token ---
 
-curl -s localhost:8081/presets    # every preset's fields, image, preview port
-
-# --- straight to the API (:8080): image + command + env, the service token ---
-
-curl -s localhost:8080/sandboxes -H 'authorization: Bearer dev-token' -H 'content-type: application/json' \
-  -d '{"owner_id":"me","image":"python:3.12","cmd":["python3","-m","http.server","8000"],"env":{"PYTHONUNBUFFERED":"1"}}'
-
-# only hosts carrying every tag are candidates; a combination no approved host has is a 422
-curl -s localhost:8080/sandboxes -H 'authorization: Bearer dev-token' -H 'content-type: application/json' \
-  -d '{"owner_id":"me","image":"python:3.12","tags":["arch:arm64","driver:docker"]}'
-
-open http://localhost:8080/doc    # the OpenAPI reference (spec at /openapi.json)
+curl -s localhost:8080/sandboxes -H 'authorization: Bearer dev-token' \
+  -H 'content-type: application/json' \
+  -d '{"owner_id":"me","image":"python:3.12","cmd":["python3","-m","http.server","8000"]}'
 ```
 
-## Presets are data
+The API reference is at <http://localhost:8080/doc>, and the document behind it at
+`/openapi.json`. The same document is checked in as [`openapi.json`](openapi.json).
 
-`examples/ui/presets/<name>/preset.yaml` declares a preset: its description, image (default
-`sandboxd-<name>:latest`), idle timeout, preview port and the request fields it
-accepts, each mapped onto one env var the image's `entry.sh` reads. The
-`Dockerfile` next to it is the image; `bun run image` builds them all. Adding a preset is
-adding a folder. Defaults such as the agent or the model live in the image's entry
-script, so an operator overrides them with `SANDBOXD_SANDBOX_ENV_<NAME>` on the API
-(e.g. `SANDBOXD_SANDBOX_ENV_MODEL=gpt-5`, `SANDBOXD_SANDBOX_ENV_CODEX_MODEL=gpt-5`).
-A malformed preset stops the UI at boot with the file name.
+## Calling it from TypeScript
 
-A sandbox is exactly one container: no sidecars, no per-sandbox network. A repo that
-needs a database runs it inside the sandbox or points at one outside.
+[`@sandboxd/sdk`](sdk/typescript) is a typed client generated from that document, so the
+shapes below come from the control plane's own handlers rather than from a copy of them.
 
-Every host needs the preset images locally (the worker only pulls on a 404): push them to
-a registry and set `image:` in the preset for multi-host setups.
+```ts
+import { createSandbox, createSandboxd } from '@sandboxd/sdk'
+
+const client = createSandboxd({
+  baseUrl: 'http://localhost:8080',
+  serviceToken: process.env.SANDBOXD_SERVICE_TOKEN!,
+})
+
+const { data, error } = await createSandbox({
+  client,
+  body: { owner_id: 'me', image: 'python:3.12', cmd: ['bash'] },
+})
+```
+
+The service token is an operator credential: keep these calls on a server. See the
+[SDK README](sdk/typescript/README.md) for the terminal socket and previews.
 
 ## Configuration
 
-API: `SANDBOXD_SERVICE_TOKEN` (**required** — set `SANDBOXD_DEV=1` to accept `dev-token`
+**API** — `SANDBOXD_SERVICE_TOKEN` (**required**; `SANDBOXD_DEV=1` accepts `dev-token`
 locally), `SANDBOXD_PORT` (8080), `SANDBOXD_PUBLIC_URL`, `SANDBOXD_PREVIEW_DOMAIN`,
 `SANDBOXD_DB`, `SANDBOXD_SECRET`, `SANDBOXD_JOIN_TOKEN`. Env injected into every sandbox:
-`SANDBOXD_SANDBOX_ENV_<NAME>=value`, plus the shorthands `SANDBOXD_LLM_BASE_URL` /
+`SANDBOXD_SANDBOX_ENV_<NAME>=value`, plus the shorthands `SANDBOXD_LLM_BASE_URL` and
 `SANDBOXD_LLM_API_KEY` (or plain `LLM_BASE_URL` / `LLM_API_KEY`).
 
-UI: `SANDBOXD_API_URL` (http://localhost:8080), `SANDBOXD_UI_PORT` (8081), `SANDBOXD_SERVICE_TOKEN`
-(must match the API's), `SANDBOXD_PRESETS_DIR` (default `examples/ui/presets`), `SANDBOXD_DEFAULT_IMAGE`
-(for `custom` sandboxes without an image; none by default).
+**Worker** — `SANDBOXD_URL` (the API, `ws://…`), `SANDBOXD_WORKER_NAME`,
+`SANDBOXD_WORKER_MAX_SESSIONS`, `SANDBOXD_WORKER_CONFIG`, `SANDBOXD_WORKER_ENTRY`,
+`SANDBOXD_WORKER_DRIVER`, `SANDBOXD_WORKER_TAGS` (`virt:vm,gpu,region:eu`; `arch:`, `os:`
+and `driver:` are reported without being configured).
 
-Worker: `SANDBOXD_URL` (the API, ws://…), `SANDBOXD_WORKER_NAME`, `SANDBOXD_WORKER_MAX_SESSIONS`,
-`SANDBOXD_WORKER_CONFIG`, `SANDBOXD_WORKER_ENTRY`, `SANDBOXD_WORKER_DRIVER`,
-`SANDBOXD_WORKER_TAGS` (`virt:vm,gpu,region:eu`; `arch:`, `os:` and `driver:` are reported
-without being configured).
+**UI** — `SANDBOXD_API_URL` (http://localhost:8080), `SANDBOXD_UI_PORT` (8081),
+`SANDBOXD_SERVICE_TOKEN` (must match the API's), `SANDBOXD_PRESETS_DIR`,
+`SANDBOXD_DEFAULT_IMAGE`.
 
-Schema changes are not migrated in v1: a db from another version is wiped at boot, with a
-warning in the log. Hosts re-enroll on their next hello; sandboxes are gone.
+Schema changes are not migrated in v1: a database from another version is wiped at boot,
+with a warning in the log. Hosts re-enrol on their next hello; sandboxes are gone.
 
-## Working on it
+## Deploying
 
-`golangci-lint fmt && go vet ./... && golangci-lint run && go test ./...` is the gate.
-`examples/ui` has its own: `bun run fmt && bun run lint && bun run typecheck && bun test`.
-`AGENTS.md` has the rules for each; `DESIGN.md` is the contract and `PLAN.md` the port's
-record.
+`nix build .#api` and `.#worker` produce the release binaries;
+`--system aarch64-linux` cross-compiles without a builder of that architecture.
+[Deploying](docs/deploy.md) covers the NixOS hosts and OpenTofu environments under
+`infra/`, worker enrollment, TLS, and getting preset images onto a remote worker.
+
+## Where to read next
+
+| Page                                       | Read it when                                                   |
+| ------------------------------------------ | -------------------------------------------------------------- |
+| [Getting started](docs/getting-started.md) | You want the stack on your laptop                              |
+| [Sandboxes](docs/sandboxes.md)             | You want to know what a sandbox can run                        |
+| [Deploying](docs/deploy.md)                | You want a control plane and workers on AWS or Proxmox         |
+| [Repo config](docs/repo-config.md)         | You want a repo to declare its own sandbox (proposed)          |
+| [SDK](sdk/typescript/README.md)            | You are calling the API from TypeScript                        |
+| [`DESIGN.md`](DESIGN.md)                   | You want the contract and why each decision went the way it did |
+| [`AGENTS.md`](AGENTS.md)                   | You are changing the code                                      |

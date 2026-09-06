@@ -279,6 +279,11 @@ func (s *Sandboxes) view(sb store.Sandbox, queue map[string]int) SandboxView {
 		detail := sb.EndedDetail
 		v.EndedDetail = &detail
 	}
+	// A nil slice or map would marshal as `null`. The document says these are always
+	// there, so a client — generated or not — never has to unwrap one.
+	if v.Cmd == nil {
+		v.Cmd = []string{}
+	}
 	if v.Env == nil {
 		v.Env = map[string]string{}
 	}

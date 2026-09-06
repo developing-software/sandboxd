@@ -36,10 +36,17 @@ func (e *errorModel) GetStatus() int { return e.status }
 
 var once sync.Once
 
-// useErrorModel replaces huma's error constructor. It is process-wide state, so it is set
-// once and never varies: every API in this binary speaks the same error shape.
-func useErrorModel() {
+// useHumaGlobals sets the two pieces of huma state that live in package variables: the
+// error constructor, and whether an array is nullable. Both are process-wide, so they are
+// set once and never vary — every API in this binary speaks the same error shape and the
+// same schema dialect.
+func useHumaGlobals() {
 	once.Do(func() {
+		// A nil Go slice marshals as `null`, which is why huma marks every array
+		// nullable. Nothing this API returns holds one — the views fill them in — so a
+		// generated client should not have to unwrap `string[] | null`.
+		huma.DefaultArrayNullable = false
+
 		huma.NewError = func(status int, msg string, errs ...error) huma.StatusError {
 			m := &errorModel{status: status, Message: msg}
 			for _, err := range errs {

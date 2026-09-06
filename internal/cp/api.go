@@ -67,7 +67,10 @@ type HostView struct {
 	Status      store.HostStatus `json:"status" enum:"pending,approved,revoked"`
 	ApproveCode string           `json:"approve_code,omitempty" doc:"Only while pending."`
 	Online      bool             `json:"online" doc:"Tunnel connected right now."`
-	Capacity    *Capacity        `json:"capacity"`
+	// Absent rather than null, the one exception to the rule above: huma refuses to type
+	// a nullable object reference, so `"capacity": null` would reach a generated client
+	// as a non-null field. `online` already says whether there is a number to read.
+	Capacity *Capacity `json:"capacity,omitempty" doc:"Only while online."`
 	Tags        []string         `json:"tags" doc:"What this host reported in its last hello."`
 	LastSeenAt  *int64           `json:"last_seen_at"`
 	CreatedAt   int64            `json:"created_at"`

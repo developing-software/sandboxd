@@ -1,0 +1,26 @@
+{
+  "name": "@sandboxd/sdk",
+  "version": "0.1.0",
+  "description": "The typed TypeScript client for the sandboxd control plane, generated from openapi.json by hey-api.",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-ts",
+    "typecheck": "tsc --noEmit",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "lint": "oxlint"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.99.0",
+    "@types/bun": "latest",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
+    "typescript": "^5"
+  }
+}

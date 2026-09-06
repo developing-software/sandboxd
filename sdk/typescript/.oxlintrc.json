@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "node"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "warn",
+    "style": "off",
+    "restriction": "off"
+  },
+  "env": { "builtin": true, "es2024": true },
+  // src/generated is hey-api's output, reproduced by `bun run generate`. Neither the
+  // formatter nor the linter touches it: a rule it fails is a note for the config, not an
+  // edit that the next generation would undo.
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "src/generated/**"]
+}

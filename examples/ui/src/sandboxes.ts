@@ -1,20 +1,13 @@
 // A friendly request (preset + its fields) into what the API accepts: image, command,
 // env, secret env, tags. The API validates the result; this only translates.
+import type { CreateSandbox } from '@sandboxd/sdk'
 import { Err } from './errors'
 import { Json } from './json'
 import type { PresetRegistry } from './presets/index'
 
-/** POST /sandboxes, as this client sends it. Phase 4 generates this from the OpenAPI
- *  document; until then it is declared here rather than imported from the API package. */
-export interface CreateSandbox {
-  owner_id: string
-  image: string
-  cmd?: string[]
-  idle_timeout_s?: number
-  env: Record<string, string>
-  secret_env: Record<string, string>
-  tags?: string[]
-}
+// CreateSandbox is generated from the control plane's own OpenAPI document, so a field
+// added there is a type error here rather than a 400 at runtime.
+export type { CreateSandbox }
 
 export interface BuildDeps {
   defaultImage: string | null

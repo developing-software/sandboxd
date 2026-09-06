@@ -1,6 +1,7 @@
 // The UI server: the page, the preset listing, and POST /sandboxes, which resolves a
 // preset before calling the API. Everything else is forwarded to the API with the
 // service token added — the browser never holds it.
+import { createSandbox, createSandboxd } from '@sandboxd/sdk'
 import { Hono } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { Err } from './errors'
@@ -22,6 +23,13 @@ export interface AppDeps {
 export function createApp(d: AppDeps) {
   const call = d.fetch ?? fetch
   const authorization = `Bearer ${d.cfg.serviceToken}`
+  // The one call this app makes as a client rather than a proxy, so it makes it with the
+  // generated SDK. Everything else is bytes it has no opinion about.
+  const api = createSandboxd({
+    baseUrl: d.cfg.apiUrl,
+    serviceToken: d.cfg.serviceToken,
+    ...(d.fetch === undefined ? {} : { fetch: d.fetch }),
+  })
   // A rejected fetch is transport: the API is down or restarting. Name it, so the page
   // says so instead of "internal error".
   const down = (e: unknown) => {
@@ -36,15 +44,11 @@ export function createApp(d: AppDeps) {
       const raw: unknown = await c.req.json().catch(() => {
         throw Err.badRequest('invalid JSON body')
       })
-      const json = buildCreate({ defaultImage: d.cfg.defaultImage, presets: d.presets }, raw)
-      const res = await call(new URL('/sandboxes', d.cfg.apiUrl), {
-        method: 'POST',
-        headers: { authorization, 'content-type': 'application/json' },
-        body: JSON.stringify(json),
-      }).catch((e) => {
-        throw down(e)
-      })
-      return relay(res)
+      const body = buildCreate({ defaultImage: d.cfg.defaultImage, presets: d.presets }, raw)
+      const { data, error, response } = await createSandbox({ client: api, body })
+      // The SDK never rejects. No response at all is transport: the API is down.
+      if (!response) throw down(error)
+      return c.json((data ?? error) as object, response.status as ContentfulStatusCode)
     })
     .all('/*', async (c) => {
       const url = new URL(c.req.path + new URL(c.req.url).search, d.cfg.apiUrl)

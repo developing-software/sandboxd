@@ -16,6 +16,7 @@
     "fallow": "bunx fallow dead-code && bunx fallow dupes"
   },
   "dependencies": {
+    "@sandboxd/sdk": "file:../../sdk/typescript",
     "hono": "^4.13.4"
   },
   "devDependencies": {

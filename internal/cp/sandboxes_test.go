@@ -50,8 +50,13 @@ func TestCreateKeepsCallerEnvAndNeverStoresSecrets(t *testing.T) {
 	if !maps.Equal(v.Env, map[string]string{"REPO": "https://x/r.git", "PROMPT": "p"}) {
 		t.Errorf("env = %v", v.Env)
 	}
-	if v.Cmd != nil || v.IdleTimeoutS != DefaultIdleS {
+	if v.IdleTimeoutS != DefaultIdleS {
 		t.Errorf("defaults = %+v", v)
+	}
+	// Every list and map on a view is an empty one, never null: the document says so and
+	// a generated client is typed on it.
+	if v.Cmd == nil || len(v.Cmd) != 0 {
+		t.Errorf("cmd = %v, want an empty list rather than null", v.Cmd)
 	}
 	if v.Tags == nil || len(v.Tags) != 0 {
 		t.Errorf("tags = %v, want an empty list rather than null", v.Tags)

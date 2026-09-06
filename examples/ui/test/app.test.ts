@@ -9,7 +9,8 @@ const loaded = loadPresetDir(resolve(import.meta.dir, '../presets'))
 function setup() {
   const calls: { method: string; url: string; auth: string | null; body: unknown }[] = []
   const fetch = async (input: string | URL | Request, init?: RequestInit) => {
-    const req = new Request(String(input instanceof Request ? input.url : input), init)
+    // Both call shapes: the proxy passes a URL and an init, the SDK a built Request.
+    const req = new Request(input, init)
     calls.push({
       method: req.method,
       url: req.url,

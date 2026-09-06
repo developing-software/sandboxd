@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -71,23 +72,44 @@ var public = map[string]struct{}{
 
 // New builds the whole HTTP surface, preview hosts included.
 func New(d Deps) http.Handler {
-	useErrorModel()
-
 	mux := http.NewServeMux()
-	api := humago.New(mux, config(d.PublicURL))
-	registerSandboxes(api, d.Sandboxes, d.Log)
-	registerHosts(api, d.Hosts, d.Log)
-	registerService(api)
+	register(mux, d.PublicURL, d.Sandboxes, d.Hosts, d.Log)
 
 	mux.HandleFunc("GET /tunnel", d.Tunnel)
 	mux.HandleFunc("GET /attach", attachHandler(d.Tokens, d.Attach))
 	mux.HandleFunc("GET /doc", docPage)
 	mux.HandleFunc("/", notFound)
-	documentAttach(api.OpenAPI())
 
 	// The preview proxy matches on the Host header, so it runs before routing and before
 	// the bearer check: its own cookie is the credential there.
 	return byHost(d.Preview, bearer(d.ServiceToken, mux))
+}
+
+// register puts every operation on one huma API. Spec calls it too, with no use cases
+// behind it, so the document and the running server can never describe different routes.
+func register(mux *http.ServeMux, publicURL string, s sandboxAPI, h hostAPI, log *slog.Logger) huma.API {
+	useHumaGlobals()
+	api := humago.New(mux, config(publicURL))
+	registerSandboxes(api, s, log)
+	registerHosts(api, h, log)
+	registerService(api)
+	documentAttach(api.OpenAPI())
+	nullableEnums(api.OpenAPI().Components.Schemas)
+	return api
+}
+
+// nullableEnums repairs the one shape huma renders as a contradiction: a nullable field
+// carrying an enum lists its values but not `null`, so the enum forbids the very value the
+// type allows. A generator believes the enum, and `SandboxView.ended_reason` — null until
+// the sandbox ends — would reach a client typed as always present.
+func nullableEnums(reg huma.Registry) {
+	for _, schema := range reg.Map() {
+		for _, prop := range schema.Properties {
+			if prop.Nullable && len(prop.Enum) > 0 && !slices.Contains(prop.Enum, nil) {
+				prop.Enum = append(prop.Enum, nil)
+			}
+		}
+	}
 }
 
 func config(publicURL string) huma.Config {
@@ -97,6 +119,9 @@ func config(publicURL string) huma.Config {
 		"a command, env and tags."
 	// Our own page, at the path the TypeScript control plane served it from.
 	cfg.DocsPath = ""
+	// huma's only create hook hangs a `$schema` link off every body it renders. Dropping
+	// it keeps the document free of a field no caller sends and no generator should type.
+	cfg.CreateHooks = nil
 	cfg.Servers = []*huma.Server{{URL: publicURL}}
 	cfg.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
 		"Bearer": {Type: "http", Scheme: "bearer"},
