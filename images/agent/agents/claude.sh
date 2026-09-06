@@ -2,6 +2,8 @@
 # claude: Anthropic's Claude Code. Talks to ANTHROPIC_BASE_URL, which _common.sh points at
 # the gateway when one is configured; otherwise api.anthropic.com with ANTHROPIC_API_KEY.
 
+# This file is sourced by the entry, so shellcheck cannot see who reads these two.
+# shellcheck disable=SC2034
 agent_describe="Claude Code (@anthropic-ai/claude-code)"
 agent_model_default="claude-sonnet-4-6"
 

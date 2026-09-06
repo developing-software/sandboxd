@@ -15,15 +15,14 @@ nothing from here but that SDK (`DESIGN.md` decisions 16, 17, 18, 22 and 27).
 | ----------------------- | --------------------------------------------------------------------------------- |
 | `api`                   | `client.yaml` and `admin.yaml`, hand-written. The source both generators read.     |
 | `internal/wire`         | The wire contract: messages, framing, ids. A leaf.                                |
-| `internal/openapi`      | ogen's server and types, from `api/client.yaml`. Generated, never edited. A leaf. |
-| `internal/adminapi`     | ogen's server and types, from `api/admin.yaml`. Generated, never edited. A leaf.  |
-| `internal/cp`           | The control plane: config, tokens, scheduler, sandbox use cases                   |
+| `internal/gen`          | Generated, never edited, a leaf: `clientapi` from `api/client.yaml`, `adminapi` from `api/admin.yaml`, both ogen |
+| `internal/cp`           | The control plane: config, tokens, scheduler and its placement policy, sandbox use cases |
 | `internal/cp/store`     | SQLite. The only package that speaks SQL.                                         |
 | `internal/cp/hosts`     | Worker tunnels: enrollment, the hub, and a stream that is a `net.Conn`            |
-| `internal/cp/attach`    | Browser terminal ↔ PTY                                                            |
+| `internal/cp/attach`    | Browser terminal ↔ PTY, behind its own `PTY` interface                            |
 | `internal/cp/preview`   | `<port>-<sid>.<domain>` → a port inside a sandbox, over `httputil.ReverseProxy`   |
-| `internal/cp/http`      | The two generated `Handler`s, the bearer check, and the only place a status lives  |
-| `internal/worker`       | The per-host daemon: driver, PTYs, one outbound tunnel                            |
+| `internal/cp/server`    | The two generated `Handler`s, the bearer check, and the only place a status lives  |
+| `internal/worker`       | The per-host daemon: manager, fanout and ring, one outbound tunnel (`tunnel`, `session`, `port`) |
 | `internal/worker/driver`| Docker today (moby client); Kubernetes next                                       |
 | `cmd/sandboxd-api`      | Wiring only, one binary                                                           |
 | `cmd/sandboxd-worker`   | Wiring only, one binary                                                           |
@@ -35,8 +34,8 @@ nothing from here but that SDK (`DESIGN.md` decisions 16, 17, 18, 22 and 27).
 `cp` and `worker` only meet on the wire: both import `wire`, neither imports the other,
 and `wire` imports nothing of ours. `cp` never imports its own subpackages — it declares
 the interfaces it needs and `cmd/sandboxd-api` supplies them, and it consumes the
-generated request and response types directly, which is why `internal/openapi` is a leaf
-beside `wire` rather than a package under `cp/http`. Declared in `.golangci.yml` as
+generated request and response types directly, which is why `internal/gen` is a leaf
+beside `wire` rather than a package under `cp/server`. Declared in `.golangci.yml` as
 `depguard` rules, enforced by `golangci-lint`.
 
 ## Commands
@@ -48,7 +47,7 @@ beside `wire` rather than a package under `cp/http`. Declared in `.golangci.yml`
 | `go vet ./...`                 |                                                                 |
 | `golangci-lint run`            | Lint, including the `depguard` import boundary                  |
 | `golangci-lint fmt`            | `gofumpt`, run through the linter so the version is pinned once |
-| `go generate ./...`           | Regenerate `internal/openapi` and `internal/adminapi` from `api/`   |
+| `go generate ./...`           | Regenerate `internal/gen` from `api/`                             |
 | `go run ./scripts/dev`         | API, worker and UI together [DO NOT RUN unless the user asks]   |
 | `go run ./cmd/sandboxd-api`    | Control plane [DO NOT RUN unless the user asks]                 |
 | `go run ./cmd/sandboxd-worker` | A worker on this machine [DO NOT RUN unless the user asks]      |
@@ -73,8 +72,8 @@ step: the operator surface has no published client, which is what lets it break 
 
 ## Go
 
-Stdlib first. The dependency table in `PLAN.md` is **closed** — adding a module is a
-`DESIGN.md` row, not a judgement call.
+Stdlib first. The direct dependencies in `go.mod` are a **closed** list — adding a module
+is a `DESIGN.md` row, not a judgement call.
 
 - **A package is a noun, a function is a verb.** `wire.Decode`, `store.SQLite`,
   `hosts.Hub`. Never `wire.DecodeWireMessage`: the package name is already in the call.
@@ -86,7 +85,7 @@ Stdlib first. The dependency table in `PLAN.md` is **closed** — adding a modul
   our own module. Fakes are for boundaries we do not own: the driver, the transport.
 - Errors wrap with `%w` and are compared with `errors.Is`. Use cases return the sentinels
   in `cp/errors.go` (`ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrUnsatisfiable`);
-  **only `cp/http` knows a status code.** An HTTP status raised inside a use case is the
+  **only `cp/server` knows a status code.** An HTTP status raised inside a use case is the
   bug that rule exists to prevent.
 - No `any` in an exported signature. `json.RawMessage` at the wire boundary is not `any`.
 - Everything long-lived takes a `context.Context` as its first parameter.

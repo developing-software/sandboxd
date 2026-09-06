@@ -36,6 +36,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # local dev state (sqlite db, worker identity)
 .data
+# Reference material kept beside the repo while studying it; never part of it.
+.bkp/
 
 # tool caches and CI reports
 .fallow

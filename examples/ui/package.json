@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "bun run --hot src/main.ts",
     "start": "bun run src/main.ts",
-    "image": "bun run presets/build.ts",
     "generate": "openapi-ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",

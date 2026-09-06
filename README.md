@@ -15,7 +15,7 @@ The pieces are two static Go binaries and a reference client:
 - **`sandboxd-worker`** — one per machine you want to run sandboxes on. Dials out to the
   control plane, so a worker needs no inbound port and no public address.
 - **`examples/ui`** — the stand-in for whatever app of yours calls the API. It holds the
-  service token, turns presets such as `coding-agent` into an image and a command, and
+  service token, turns presets such as `agent` into an image and a command, and
   serves the xterm.js page.
 
 The API itself knows nothing about repos, agents or presets: it speaks images, commands,
@@ -34,7 +34,7 @@ go run ./scripts/dev                               # api :8080, ui :8081, a work
 
 Open <http://localhost:8081/hosts>. The worker shows up as a card marked **pending** with
 an approval code printed in the terminal — paste it into the card. Then go to **new**, pick
-the `coding-agent` preset, give it a repo and a prompt, and watch it work.
+the `agent` preset, give it a repo and a prompt, and watch it work.
 
 [Getting started](docs/getting-started.md) has the rest: running the three processes
 separately, skipping the approval code with a join token, and pointing a local UI at a
@@ -44,7 +44,7 @@ deployed control plane.
 
 | Preset         | What you get                                                                  |
 | -------------- | ----------------------------------------------------------------------------- |
-| `coding-agent` | A fresh clone on its own branch, then Claude Code, Codex, OpenCode or a shell |
+| `agent` | A fresh clone on its own branch, then Claude Code, Codex, OpenCode or a shell |
 | `vscode`       | VS Code (code-server) on the repo, in the browser                            |
 | `jupyter`      | JupyterLab or the classic Notebook, in the browser                           |
 | `ubuntu`, `python`, `node` | A shell or a REPL on the stock image; nothing to build              |

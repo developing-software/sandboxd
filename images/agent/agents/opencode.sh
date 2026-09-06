@@ -3,6 +3,8 @@
 # the model has to be declared in the config before it can be selected — which is why this
 # file writes one model rather than a catalogue.
 
+# This file is sourced by the entry, so shellcheck cannot see who reads these two.
+# shellcheck disable=SC2034
 agent_describe="OpenCode (opencode-ai)"
 agent_model_default="gpt-4o"
 

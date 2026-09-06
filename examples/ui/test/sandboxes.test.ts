@@ -21,13 +21,13 @@ test('preset picked by repo; caller image, cmd, idle and env win over the preset
     secret_env: { S: 'x' },
   })
   expect(b).toEqual({
-    image: 'sandboxd-coding-agent:latest',
+    image: 'ghcr.io/developing-software/sandboxd-agent:latest',
     env: { REPO: 'https://x/r.git', PROMPT: 'override', EXTRA: '1' },
     secret_env: { GIT_TOKEN: 'gt', S: 'x' },
   })
   const j = buildCreate(deps(), { preset: 'jupyter' })
   expect([j.image, j.cmd, j.idle_timeout_s]).toEqual([
-    'sandboxd-jupyter:latest',
+    'ghcr.io/developing-software/sandboxd-jupyter:latest',
     undefined,
     4 * 3600,
   ])

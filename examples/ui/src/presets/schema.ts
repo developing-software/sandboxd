@@ -45,11 +45,12 @@ export function parsePresetDoc(name: string, doc: unknown): PresetDoc {
   if (typeof doc.description !== 'string' || !doc.description.trim())
     throw new Error('description is required')
 
+  // A preset never builds an image — `images/` does, and publishes it — so there is no
+  // folder name to derive a tag from: say which existing image, or null for none.
   let image: string | null
-  if (doc.image === undefined) image = `sandboxd-${name}:latest`
-  else if (doc.image === null) image = null
+  if (doc.image === null) image = null
   else if (typeof doc.image === 'string' && doc.image.trim()) image = doc.image.trim()
-  else throw new Error('image must be a non-empty string or null')
+  else throw new Error('image is required: a registry reference, or null for none')
 
   let cmd: string[] | null = null
   if (doc.cmd !== undefined && doc.cmd !== null) {

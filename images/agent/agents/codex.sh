@@ -4,6 +4,8 @@
 # Responses→Bedrock translation fails on a tool_choice conflict, so a Claude model here
 # usually ends in an error rather than a run.
 
+# This file is sourced by the entry, so shellcheck cannot see who reads these two.
+# shellcheck disable=SC2034
 agent_describe="Codex CLI (@openai/codex)"
 agent_model_default="gpt-5-codex"
 

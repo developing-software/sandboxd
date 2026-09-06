@@ -1,6 +1,7 @@
 # jupyter: JupyterLab (or classic Notebook) on the docker-stacks minimal image, previewed on `port`.
 # Idle defaults to 4 h because preview traffic does not count as activity (design decision 10).
 description: JupyterLab or classic Notebook behind the preview proxy
+image: ghcr.io/developing-software/sandboxd-jupyter:latest
 idle_timeout_s: 14400
 preview: { port_field: port }
 fields:

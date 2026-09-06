@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { loadConfig } from '../src/config'
 import {
@@ -12,6 +13,15 @@ import {
 const loaded = loadPresetDir(resolve(import.meta.dir, '../presets'))
 const reg = new PresetRegistry(loaded.presets)
 const preset = (name: string): Preset => reg.get(name)!
+
+// This app builds nothing: an image either comes from images/ (published, ships its own
+// entry) or from somewhere else entirely. `ours` names the folder, or undefined.
+const IMAGES = resolve(import.meta.dir, '../../../images')
+const REGISTRY = 'ghcr.io/developing-software'
+const ours = (image: string | null) =>
+  image?.startsWith(`${REGISTRY}/sandboxd-`)
+    ? image.slice(`${REGISTRY}/sandboxd-`.length).split(':')[0]
+    : undefined
 
 test('config: presets dir defaults to this app, image default is opt-in', () => {
   const cfg = loadConfig({ SANDBOXD_SERVICE_TOKEN: 't' })
@@ -28,7 +38,7 @@ test('config: presets dir defaults to this app, image default is opt-in', () => 
 
 test('shipped presets: one folder each; a built image ships its entry, a stock one a cmd', () => {
   expect(reg.names).toEqual([
-    'coding-agent',
+    'agent',
     'custom',
     'http',
     'jupyter',
@@ -39,24 +49,45 @@ test('shipped presets: one folder each; a built image ships its entry, a stock o
     'vscode',
   ])
   expect(reg.list().map((p) => [p.name, p.image, p.cmd?.[0] ?? null])).toEqual([
-    ['coding-agent', 'sandboxd-coding-agent:latest', null],
+    ['agent', 'ghcr.io/developing-software/sandboxd-agent:latest', null],
     ['custom', null, null],
     ['http', 'python:3.12-slim', 'python3'],
-    ['jupyter', 'sandboxd-jupyter:latest', null],
+    ['jupyter', 'ghcr.io/developing-software/sandboxd-jupyter:latest', null],
     ['node', 'node:22-slim', 'node'],
     ['notebook', 'quay.io/jupyter/minimal-notebook:latest', 'jupyter'],
     ['python', 'python:3.12-slim', 'python3'],
     ['ubuntu', 'ubuntu:24.04', 'bash'],
-    ['vscode', 'sandboxd-vscode:latest', null],
+    ['vscode', 'ghcr.io/developing-software/sandboxd-vscode:latest', null],
   ])
-  // A built image ships its entry at /usr/local/bin/sandboxd-entry, so it implies no cmd;
+  // One of ours ships its entry at /usr/local/bin/sandboxd-entry, so it implies no cmd;
   // a stock image has no entry of ours, so the preset must say what runs in the PTY.
   for (const p of reg.list())
-    expect(p.cmd === null).toBe(p.image === null || p.image.startsWith('sandboxd-'))
+    expect(p.cmd === null).toBe(p.image === null || ours(p.image) !== undefined)
 })
 
-test('coding-agent: fields expand to entry.sh env; secrets split out; absent fields emit nothing', () => {
-  const x = preset('coding-agent').expand({
+test('presets over ours name an image this repo publishes, on the tag it publishes', () => {
+  for (const p of reg.list()) {
+    const name = ours(p.image)
+    if (name === undefined) continue
+    expect(p.image).toBe(`${REGISTRY}/sandboxd-${name}:latest`)
+    expect(existsSync(resolve(IMAGES, name, 'Dockerfile'))).toBe(true)
+  }
+})
+
+// The image discovers its own agents from that folder; this preset repeats the list so a UI
+// can offer a menu and a typo is a 400. Nothing else may know an agent's name — see
+// images/agent/agents/README.md.
+test('agent preset: the enum mirrors images/agent/agents/, file for file', () => {
+  const files = readdirSync(resolve(IMAGES, 'agent/agents'))
+    .filter((f) => f.endsWith('.sh') && !f.startsWith('_'))
+    .map((f) => f.replace(/\.sh$/, ''))
+    .toSorted()
+  const field = preset('agent').info.fields.find((f) => f.name === 'agent')!
+  expect(field.values!.toSorted()).toEqual(files)
+})
+
+test('agent: fields expand to entry.sh env; secrets split out; absent fields emit nothing', () => {
+  const x = preset('agent').expand({
     repo: 'https://x/r.git',
     prompt: 'do it',
     setup: ' bun install ',
@@ -70,18 +101,18 @@ test('coding-agent: fields expand to entry.sh env; secrets split out; absent fie
     LLM_BASE_URL: 'http://mine',
   })
   expect(x.secret_env).toEqual({ LLM_API_KEY: 'sk', GIT_TOKEN: 'gt' })
-  expect(x.image).toBe('sandboxd-coding-agent:latest')
+  expect(x.image).toBe('ghcr.io/developing-software/sandboxd-agent:latest')
   expect(x.cmd).toBeUndefined()
   // AGENT / MODEL / BRANCH are defaulted by entry.sh, so an operator's SANDBOXD_SANDBOX_ENV_* survives (the API's
   // scheduler drops operator keys that the session env also sets).
-  expect(preset('coding-agent').expand({ repo: 'r' }).env).toEqual({ REPO: 'r' })
+  expect(preset('agent').expand({ repo: 'r' }).env).toEqual({ REPO: 'r' })
   expect(
-    preset('coding-agent').expand({ repo: 'r', agent: 'codex', model: 'gpt-5' }).env,
+    preset('agent').expand({ repo: 'r', agent: 'codex', model: 'gpt-5' }).env,
   ).toMatchObject({ AGENT: 'codex', MODEL: 'gpt-5' })
 })
 
-test('coding-agent: validation messages', () => {
-  const c = preset('coding-agent')
+test('agent: validation messages', () => {
+  const c = preset('agent')
   expect(() => c.expand({ prompt: 'p' })).toThrow(/repo is required/)
   expect(() => c.expand({ repo: '' })).toThrow(/repo is required/)
   expect(() => c.expand({ repo: 'r', agent: 'vim' })).toThrow(
@@ -99,7 +130,7 @@ test('jupyter: defaults for ui/port/idle, preview port from the port field, vali
   const x = j.expand({})
   expect(x.env).toEqual({ JUPYTER_UI: 'lab', JUPYTER_PORT: '8888' })
   expect(x.secret_env).toEqual({})
-  expect(x.image).toBe('sandboxd-jupyter:latest')
+  expect(x.image).toBe('ghcr.io/developing-software/sandboxd-jupyter:latest')
   expect(x.idle_timeout_s).toBe(4 * 3600)
   expect(j.info.preview).toEqual({ port: 8888, port_field: 'port' })
   const y = j.expand({
@@ -125,7 +156,7 @@ test('vscode: editor only, previewed on the port field', () => {
   expect(v.expand({})).toEqual({
     env: { VSCODE_PORT: '8080' },
     secret_env: {},
-    image: 'sandboxd-vscode:latest',
+    image: 'ghcr.io/developing-software/sandboxd-vscode:latest',
     idle_timeout_s: 14400,
   })
   expect(v.info.preview).toEqual({ port: 8080, port_field: 'port' })
@@ -142,11 +173,11 @@ test('custom: nothing implied, no image', () => {
 
 test('registry: explicit name, claim by repo, fallback to custom, unknown -> 400, duplicates refused', () => {
   expect(reg.resolve({ preset: 'jupyter', repo: 'r' }).name).toBe('jupyter')
-  expect(reg.resolve({ repo: 'r' }).name).toBe('coding-agent')
+  expect(reg.resolve({ repo: 'r' }).name).toBe('agent')
   expect(reg.resolve({ repo: ' ' }).name).toBe('custom')
   expect(reg.resolve({ image: 'python:3.12' }).name).toBe('custom')
   expect(() => reg.resolve({ preset: 'nope' })).toThrow(
-    /preset must be one of coding-agent, custom, http, jupyter, node, notebook, python, ubuntu, vscode/,
+    /preset must be one of agent, custom, http, jupyter, node, notebook, python, ubuntu, vscode/,
   )
   expect(() => new PresetRegistry([preset('custom')], 'missing')).toThrow(/not registered/)
   expect(() => new PresetRegistry([preset('custom'), preset('custom')])).toThrow(
@@ -155,7 +186,11 @@ test('registry: explicit name, claim by repo, fallback to custom, unknown -> 400
 })
 
 // ---- schema ----
-const doc = (extra: Record<string, unknown> = {}) => ({ description: 'd', ...extra })
+const doc = (extra: Record<string, unknown> = {}) => ({
+  description: 'd',
+  image: 'i:1',
+  ...extra,
+})
 const bad =
   (d: Record<string, unknown>, name = 'x') =>
   () =>
@@ -165,13 +200,15 @@ test('schema: image/cmd/idle/preview/claims and their errors', () => {
   const p = parsePresetDoc('x', doc())
   expect([p.name, p.image, p.cmd, p.idle_timeout_s, p.preview, p.claims, p.fields]).toEqual([
     'x',
-    'sandboxd-x:latest',
+    'i:1',
     null,
     null,
     null,
     [],
     [],
   ])
+  // No preset builds an image, so none is derived from the folder name: say which, or null.
+  expect(bad({ description: 'd' })).toThrow(/image is required/)
   expect(parsePresetDoc('x', doc({ image: null })).image).toBeNull()
   expect(parsePresetDoc('x', doc({ image: 'ghcr.io/o/i:1 ' })).image).toBe('ghcr.io/o/i:1')
   expect(parsePresetDoc('x', doc({ cmd: ['sh'], idle_timeout_s: 60 }))).toMatchObject({
@@ -182,11 +219,11 @@ test('schema: image/cmd/idle/preview/claims and their errors', () => {
     port: 3000,
     port_field: null,
   })
-  expect(bad({})).toThrow(/description is required/)
+  expect(bad({ image: 'i:1' })).toThrow(/description is required/)
   expect(bad(doc({ name: 'y' }))).toThrow(/does not match the directory/)
   expect(bad(doc({ bogus: 1 }))).toThrow(/unknown key "bogus"/)
   expect(bad(doc({ services: ['postgres'] }))).toThrow(/unknown key "services"/)
-  expect(bad(doc({ image: '' }))).toThrow(/image must be/)
+  expect(bad(doc({ image: '' }))).toThrow(/image is required/)
   expect(bad(doc({ cmd: [] }))).toThrow(/cmd must be/)
   expect(bad(doc({ idle_timeout_s: 5 }))).toThrow(/idle_timeout_s must be/)
   expect(bad(doc({ preview: { port: 0 } }))).toThrow(/preview.port must be/)

@@ -1,6 +1,7 @@
 # vscode: VS Code in the browser (code-server) on a repo, editor only. Preview it on `port`.
 # Idle defaults to 4 h because preview traffic does not count as activity (design decision 10).
 description: VS Code (code-server) on a repo, behind the preview proxy
+image: ghcr.io/developing-software/sandboxd-vscode:latest
 idle_timeout_s: 14400
 preview: { port_field: port }
 fields:

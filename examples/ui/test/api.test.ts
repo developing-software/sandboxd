@@ -40,7 +40,7 @@ test('the presets are served here, and nothing outside /api is', async () => {
   const { app, calls } = setup()
   const presets = (await (await app.request('/api/presets')).json()) as { name: string }[]
   expect(presets.map((p) => p.name)).toEqual([
-    'coding-agent',
+    'agent',
     'custom',
     'http',
     'jupyter',
@@ -71,7 +71,7 @@ test('POST /api/sandboxes resolves the preset, then calls the API with the token
     // The owner reaches the control plane beside the token, not inside the body.
     owner: 'me',
     body: {
-      image: 'sandboxd-coding-agent:latest',
+      image: 'ghcr.io/developing-software/sandboxd-agent:latest',
       env: { REPO: 'https://x/r.git' },
       secret_env: {},
     },

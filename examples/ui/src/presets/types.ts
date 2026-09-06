@@ -47,7 +47,7 @@ export interface PresetInfo {
 export interface Preset {
   readonly name: string
   readonly info: PresetInfo
-  /** Claim a request that names no `preset` (e.g. coding-agent claims anything with `repo`). */
+  /** Claim a request that names no `preset` (e.g. `agent` claims anything with `repo`). */
   claims?(body: Body): boolean
   /** Validate the preset's own fields and expand them. Throws HttpError on bad input. */
   expand(body: Body): Expanded

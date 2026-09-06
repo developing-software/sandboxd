@@ -42,7 +42,9 @@ Nothing else is guaranteed. The daemon promises only `TERM` and `SANDBOXD_SESSIO
 ## Adding one
 
 1. `apt`/`npm` install the binary in `../Dockerfile`.
-2. Write `<agent>.sh` here.
+2. Write `<agent>.sh` here. Carry the `# shellcheck disable=SC2034` line the others have,
+   with its reason: the file is sourced, so the reader of `agent_describe` and
+   `agent_model_default` is in another file and CI would otherwise call them unused.
 3. Add the name to `agent.values` in `../preset.yaml`, so the UI offers it and a typo is a
    400 rather than a shell. `bun test` fails if the two lists disagree.
 

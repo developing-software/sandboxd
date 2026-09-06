@@ -18,7 +18,7 @@ async function load() {
       (p) => `<option value="${esc(p.name)}">${esc(p.name)} — ${esc(p.description)}</option>`,
     )
     .join('')
-  select.value = presets.has('coding-agent') ? 'coding-agent' : (list[0]?.name ?? '')
+  select.value = presets.has('agent') ? 'agent' : (list[0]?.name ?? '')
   renderFields()
 }
 load().catch((err) => Shell.fail((err as Error).message))
