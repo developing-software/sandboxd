@@ -17,6 +17,7 @@ import (
 	"sandboxd/internal/conf"
 	"sandboxd/internal/sandbox"
 	"sandboxd/internal/sandbox/docker"
+	"sandboxd/internal/sandbox/drivers"
 	"sandboxd/internal/wire"
 )
 
@@ -34,27 +35,13 @@ type Config struct {
 	JoinTokenFile string   `yaml:"join_token_file,omitempty"`
 	// Identity is the path of the host's self-generated secret: state, not config, which
 	// is why it stays a separate file.
-	Identity string `yaml:"identity"`
-	Driver   Driver `yaml:"driver"`
+	Identity string         `yaml:"identity"`
+	Driver   drivers.Config `yaml:"driver"`
 
 	// Secret never leaves this machine; Fingerprint is what the control plane sees and
 	// what approval is bound to. Both come from LoadIdentity, never from the file.
 	Secret      string `yaml:"-"`
 	Fingerprint string `yaml:"-"`
-}
-
-// Driver is the `driver:` block: exactly one of these is set, and its keys are the same
-// block the control plane's `providers.<name>` carries.
-type Driver struct {
-	Docker *docker.Config `yaml:"docker,omitempty"`
-}
-
-// Name is the driver's tag value, and the block that was chosen.
-func (d Driver) Name() string {
-	if d.Docker != nil {
-		return "docker"
-	}
-	return ""
 }
 
 // hostFile is the on-disk identity. Its path and shape are fixed: a host provisioned by an
@@ -101,7 +88,7 @@ func legacy(lookup conf.Lookup) (Config, error) {
 		if err != nil || n < 1 {
 			return Config{}, fmt.Errorf("worker: SANDBOXD_WORKER_MAX_SESSIONS must be a positive integer, got %q", raw)
 		}
-		drv.MaxSandboxes = n
+		drv.Max = n
 	}
 	if name := get("SANDBOXD_WORKER_DRIVER"); name != "" && name != "docker" {
 		return Config{}, fmt.Errorf("worker: SANDBOXD_WORKER_DRIVER=%q is not implemented", name)
@@ -120,7 +107,7 @@ func legacy(lookup conf.Lookup) (Config, error) {
 		Tags:      tags,
 		JoinToken: get("SANDBOXD_JOIN_TOKEN"),
 		Identity:  identity,
-		Driver:    Driver{Docker: &drv},
+		Driver:    drivers.Config{Docker: &drv},
 	}, nil
 }
 
@@ -144,11 +131,8 @@ func (c *Config) Validate() error {
 	}
 	c.JoinToken, c.JoinTokenFile = token, ""
 
-	if c.Driver.Docker == nil {
-		return errors.New("driver: one block is required (docker)")
-	}
-	if err := c.Driver.Docker.Validate(); err != nil {
-		return fmt.Errorf("driver.docker: %w", err)
+	if err := c.Driver.Validate(); err != nil {
+		return fmt.Errorf("driver: %w", err)
 	}
 	if c.Tags, err = sandbox.Tags(c.Driver.Name(), c.Tags); err != nil {
 		return fmt.Errorf("tags: %w", err)

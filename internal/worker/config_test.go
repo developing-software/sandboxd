@@ -13,6 +13,7 @@ import (
 
 	"sandboxd/internal/conf"
 	"sandboxd/internal/sandbox/docker"
+	"sandboxd/internal/sandbox/drivers"
 )
 
 func env(pairs map[string]string) conf.Lookup {
@@ -54,7 +55,7 @@ driver:
 		Tags:      []string{"arch:" + runtime.GOARCH, "driver:docker", "gpu:a100", "os:" + runtime.GOOS},
 		JoinToken: "jt",
 		Identity:  "/var/lib/sandboxd-worker/host.json",
-		Driver:    Driver{Docker: &docker.Config{Sock: "/run/docker.sock", Entry: "/usr/local/bin/sandboxd-entry", MaxSandboxes: 2}},
+		Driver:    drivers.Config{Docker: &docker.Config{Sock: "/run/docker.sock", Entry: "/usr/local/bin/sandboxd-entry", Max: 2}},
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config\n got %+v %+v\nwant %+v %+v", cfg, cfg.Driver.Docker, want, want.Driver.Docker)
@@ -91,7 +92,7 @@ func TestLegacyEnvDefaults(t *testing.T) {
 		t.Errorf("the old identity variable must still be honoured: %q", cfg.Identity)
 	}
 	d := cfg.Driver.Docker
-	if d == nil || d.MaxSandboxes != 4 || d.Sock != "/var/run/docker.sock" || d.EntryCommand()[0] != "/usr/local/bin/sandboxd-entry" {
+	if d == nil || d.Max != 4 || d.Sock != "/var/run/docker.sock" || d.EntryCommand()[0] != "/usr/local/bin/sandboxd-entry" {
 		t.Errorf("driver = %+v", d)
 	}
 }
@@ -114,7 +115,7 @@ func TestLegacyEnvIsReadUnchanged(t *testing.T) {
 		t.Errorf("config = %+v", cfg)
 	}
 	d := cfg.Driver.Docker
-	if d.MaxSandboxes != 9 || d.Sock != "/run/docker.sock" || !reflect.DeepEqual(d.EntryCommand(), []string{"bash", "-l"}) {
+	if d.Max != 9 || d.Sock != "/run/docker.sock" || !reflect.DeepEqual(d.EntryCommand(), []string{"bash", "-l"}) {
 		t.Errorf("driver = %+v", d)
 	}
 	want := []string{

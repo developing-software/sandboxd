@@ -21,6 +21,7 @@ nothing from here but that SDK.
 | `internal/gen`          | Generated, never edited, a leaf: `clientapi` from `api/client.yaml`, `adminapi` from `api/admin.yaml`, both ogen |
 | `internal/sandbox`      | `Driver`, `PTY`, the `Manager` with its fanout and ring, `Tags`. Imports `wire` only; both daemons import it |
 | `internal/sandbox/docker` | The Docker driver (moby client) and its `Config`, one block in either daemon's file |
+| `internal/sandbox/drivers` | The registry: the `driver:` / `providers.<name>` block decoded, validated and opened. The only place a driver's name meets its package |
 | `internal/sandbox/sandboxtest` | The fake driver every manager owner tests against                           |
 | `internal/cp`           | The control plane: config, tokens, scheduler and its placement policy, sandbox use cases |
 | `internal/cp/store`     | SQLite. The only package that speaks SQL.                                         |

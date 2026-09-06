@@ -58,7 +58,7 @@ providers:
 			Docker: &DockerProvider{
 				Name:   "cp",
 				Tags:   []string{"arch:" + runtime.GOARCH, "driver:docker", "gpu", "os:" + runtime.GOOS},
-				Config: docker.Config{Sock: "/var/run/docker.sock", Entry: "/usr/local/bin/sandboxd-entry", MaxSandboxes: 2},
+				Config: docker.Config{Sock: "/var/run/docker.sock", Entry: "/usr/local/bin/sandboxd-entry", Max: 2},
 			},
 		},
 	}
@@ -99,7 +99,7 @@ func TestFileConfigProviders(t *testing.T) {
 	if p := load(t, "providers: {docker: {}}\n").Providers; p.Workers != nil || p.Docker == nil {
 		t.Errorf("docker-only providers = %+v", p)
 	}
-	if d := load(t, "providers: {docker: {}}\n").Providers.Docker; d.Name == "" || d.MaxSandboxes != 4 {
+	if d := load(t, "providers: {docker: {}}\n").Providers.Docker; d.Name == "" || d.Max != 4 {
 		t.Errorf("docker defaults = %+v", d)
 	}
 }

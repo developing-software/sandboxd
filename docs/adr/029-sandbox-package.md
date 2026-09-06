@@ -17,6 +17,10 @@ between the daemons: they still meet on the wire, and `depguard` denies it both 
 - The manager takes `entry` and `max` at construction and exposes `Capacity()`. The
   worker's hello and heartbeat read capacity from there, not from its config, which is
   what lets the control plane reuse it unchanged.
+- `sandbox/drivers` is the registry: `drivers.Config` is the `driver:` block on a worker and
+  the driver half of `providers.<name>` on the control plane, and `Open` is the one switch
+  from a name to a package. Neither cmd names Docker; a new driver is one field and two
+  cases there.
 - `sandbox.Tags(driver, extra)` is where `arch:`, `os:` and `driver:` are added, so a
   worker and an embedded provider report alike.
 - The fake driver is `sandbox/sandboxtest`, one fake for every owner of a manager. The

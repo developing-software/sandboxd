@@ -14,7 +14,6 @@ import (
 
 	"sandboxd/internal/conf"
 	"sandboxd/internal/sandbox"
-	"sandboxd/internal/sandbox/docker"
 	"sandboxd/internal/wire"
 	"sandboxd/internal/worker"
 )
@@ -57,7 +56,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	drv, err := docker.New(*cfg.Driver.Docker, cfg.Fingerprint, log)
+	drv, err := cfg.Driver.Open(cfg.Fingerprint, log)
 	if err != nil {
 		return err
 	}
@@ -69,7 +68,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer closeDaemon()
 
 	events := make(chan sandbox.Event, 64)
-	mgr := sandbox.NewManager(daemon, drv, cfg.Driver.Docker.EntryCommand(), cfg.Driver.Docker.MaxSandboxes, events, log)
+	mgr := sandbox.NewManager(daemon, drv, cfg.Driver.EntryCommand(), cfg.Driver.MaxSandboxes(), events, log)
 	tunnel := worker.NewTunnel(cfg, mgr, events, log)
 
 	// A sandbox from a previous run cannot be re-attached: its PTY and ring died with
@@ -83,7 +82,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		"name", cfg.Name,
 		"cp", cfg.URL,
 		"driver", cfg.Driver.Name(),
-		"max_sandboxes", cfg.Driver.Docker.MaxSandboxes,
+		"max_sandboxes", cfg.Driver.MaxSandboxes(),
 		"tags", cfg.Tags,
 		"fingerprint", cfg.Fingerprint[:12],
 	)

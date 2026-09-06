@@ -30,11 +30,11 @@ func TestConfigDefaults(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	want := Config{Sock: defaultSock, Entry: defaultEntry, MaxSandboxes: defaultMax}
+	want := Config{Sock: defaultSock, Entry: defaultEntry, Max: defaultMax}
 	if cfg != want {
 		t.Errorf("defaults = %+v, want %+v", cfg, want)
 	}
-	if err := (&Config{MaxSandboxes: -1}).Validate(); err == nil {
+	if err := (&Config{Max: -1}).Validate(); err == nil {
 		t.Error("a negative max must be refused")
 	}
 }

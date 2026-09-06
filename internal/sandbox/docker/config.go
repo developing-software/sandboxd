@@ -20,8 +20,8 @@ type Config struct {
 	Sock string `yaml:"sock"`
 	// Entry is the command exec'd in the PTY when a sandbox names none: a command line,
 	// or the JSON array the NixOS module writes.
-	Entry        string `yaml:"entry"`
-	MaxSandboxes int    `yaml:"max_sandboxes"`
+	Entry string `yaml:"entry"`
+	Max   int    `yaml:"max_sandboxes"`
 }
 
 // Validate fills the defaults and refuses what cannot work.
@@ -32,14 +32,17 @@ func (c *Config) Validate() error {
 	if c.Entry == "" {
 		c.Entry = defaultEntry
 	}
-	if c.MaxSandboxes == 0 {
-		c.MaxSandboxes = defaultMax
+	if c.Max == 0 {
+		c.Max = defaultMax
 	}
-	if c.MaxSandboxes < 0 {
-		return fmt.Errorf("max_sandboxes must be positive, got %d", c.MaxSandboxes)
+	if c.Max < 0 {
+		return fmt.Errorf("max_sandboxes must be positive, got %d", c.Max)
 	}
 	return nil
 }
+
+// MaxSandboxes is what this Engine may hold at once.
+func (c Config) MaxSandboxes() int { return c.Max }
 
 // EntryCommand is Entry parsed: a JSON array as written, or a command line split on
 // whitespace.

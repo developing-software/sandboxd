@@ -23,6 +23,8 @@ tunnel (`workers`), or inside the control plane process (`docker`, keyed by its 
   every event and heartbeat, exactly as the hub does for a worker.
 - Every host behind the tunnel carries `provider:workers`, added by enrollment: which
   provider a host belongs to is the control plane's fact, not the worker's.
+- `cp.Providers.Embedded()` lists the in-process providers as name, tags and a
+  `drivers.Config`, so `cmd/sandboxd-api` loops without naming a driver.
 - `cp.PTY` is declared beside `cp.Capacity`, for the same reason: the fleet routes it
   between a provider and the bridge, and neither should have to name the other.
 - `providers:` absent or empty means `workers: {}`; present means exactly what is present,

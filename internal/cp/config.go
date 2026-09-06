@@ -13,6 +13,7 @@ import (
 	"sandboxd/internal/conf"
 	"sandboxd/internal/sandbox"
 	"sandboxd/internal/sandbox/docker"
+	"sandboxd/internal/sandbox/drivers"
 )
 
 // Control-plane configuration. The API is generic: it knows images, commands, env and
@@ -55,10 +56,29 @@ type Auth struct {
 
 // Providers is where sandboxes may run. Absent, or empty, means `workers: {}`; anything
 // present means exactly what is present, so a file that names only `docker` runs no
-// tunnel at all.
+// tunnel at all. Every key but `workers` is a driver's name: a manager in this process
+// over that driver, and Embedded lists them without naming one.
 type Providers struct {
 	Workers *Workers        `yaml:"workers,omitempty"`
 	Docker  *DockerProvider `yaml:"docker,omitempty"`
+}
+
+// Embedded is one in-process provider as cmd/sandboxd-api wires it: the provider's own
+// name and tags, and the driver block to open.
+type Embedded struct {
+	Name   string
+	Tags   []string
+	Driver drivers.Config
+}
+
+// Embedded is every in-process provider the file enables. This is the one place a
+// provider key is matched to its driver; the cmd loops over the result.
+func (p Providers) Embedded() []Embedded {
+	var out []Embedded
+	if d := p.Docker; d != nil {
+		out = append(out, Embedded{Name: d.Name, Tags: d.Tags, Driver: drivers.Config{Docker: &d.Config}})
+	}
+	return out
 }
 
 // Workers is the tunnel: machines running sandboxd-worker that dial in.
@@ -200,20 +220,29 @@ func (p *Providers) validate() error {
 		w.JoinToken, w.JoinTokenFile = token, ""
 	}
 	if d := p.Docker; d != nil {
-		if err := d.Validate(); err != nil {
-			return fmt.Errorf("providers.docker: %w", err)
+		if err := d.validate("docker"); err != nil {
+			return err
 		}
-		if d.Name == "" {
-			if d.Name, _ = os.Hostname(); d.Name == "" {
-				d.Name = "docker"
-			}
-		}
-		tags, err := sandbox.Tags("docker", d.Tags)
-		if err != nil {
-			return fmt.Errorf("providers.docker.tags: %w", err)
-		}
-		d.Tags = tags
 	}
+	return nil
+}
+
+// validate is what every embedded provider block shares: the driver's own validation,
+// a name, and the fact tags.
+func (d *DockerProvider) validate(driver string) error {
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("providers.%s: %w", driver, err)
+	}
+	if d.Name == "" {
+		if d.Name, _ = os.Hostname(); d.Name == "" {
+			d.Name = driver
+		}
+	}
+	tags, err := sandbox.Tags(driver, d.Tags)
+	if err != nil {
+		return fmt.Errorf("providers.%s.tags: %w", driver, err)
+	}
+	d.Tags = tags
 	return nil
 }
 

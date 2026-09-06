@@ -25,7 +25,6 @@ import (
 	"sandboxd/internal/cp/preview"
 	"sandboxd/internal/cp/server"
 	"sandboxd/internal/cp/store"
-	"sandboxd/internal/sandbox/docker"
 )
 
 const (
@@ -89,20 +88,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// request, and shutdown ends them explicitly below.
 	daemon, closeDaemon := context.WithCancel(context.Background())
 	defer closeDaemon()
-	var embedded *local.Provider
-	if d := cfg.Providers.Docker; d != nil {
-		drv, err := docker.New(d.Config, local.Fingerprint("docker"), log)
+	var embedded []*local.Provider
+	for _, e := range cfg.Providers.Embedded() {
+		drv, err := e.Driver.Open(local.Fingerprint(e.Driver.Name()), log)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = drv.Close() }()
-		embedded, err = local.New(daemon, drv, local.Options{
-			Name: d.Name, Tags: d.Tags, Driver: "docker", Entry: d.EntryCommand(), Max: d.MaxSandboxes,
+		p, err := local.New(daemon, drv, local.Options{
+			Name: e.Name, Tags: e.Tags, Driver: e.Driver.Name(),
+			Entry: e.Driver.EntryCommand(), Max: e.Driver.MaxSandboxes(),
 		}, st, events, log)
 		if err != nil {
 			return err
 		}
-		providers = append(providers, embedded)
+		embedded = append(embedded, p)
+		providers = append(providers, p)
 	}
 	fl := fleet.New(providers...)
 
@@ -111,8 +112,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("boot: %w", err)
 	}
 	go sched.Run(daemon)
-	if embedded != nil {
-		go embedded.Run(daemon)
+	for _, p := range embedded {
+		go p.Run(daemon)
 	}
 
 	sandboxes := cp.NewSandboxes(cfg, st, fl, sched, tokens)
@@ -148,7 +149,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	)
 	log.Info("providers",
 		"workers", cfg.Providers.Workers != nil,
-		"docker", cfg.Providers.Docker != nil,
+		"embedded", len(embedded),
 		"sandbox_env", slices.Sorted(maps.Keys(cfg.SandboxEnv)),
 		"enrollment", enrollment(cfg.Providers.Workers),
 	)
@@ -168,8 +169,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	log.Info("shutting down")
 	grace, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
-	if embedded != nil {
-		embedded.Close(grace)
+	for _, p := range embedded {
+		p.Close(grace)
 	}
 	if err := srv.Shutdown(grace); err != nil {
 		return srv.Close()
