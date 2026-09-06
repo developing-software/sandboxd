@@ -11,6 +11,7 @@
         "hono": "^4.13.4",
       },
       "devDependencies": {
+        "@hey-api/openapi-ts": "^0.99.0",
         "@types/bun": "latest",
         "fallow": "^3.22.0",
         "oxfmt": "^0.66.0",

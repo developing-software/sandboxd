@@ -7,6 +7,7 @@
     "dev": "bun run --hot src/main.ts",
     "start": "bun run src/main.ts",
     "image": "bun run presets/build.ts",
+    "generate": "openapi-ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "fmt": "oxfmt",
@@ -22,6 +23,7 @@
     "hono": "^4.13.4"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "^0.99.0",
     "@types/bun": "latest",
     "fallow": "^3.22.0",
     "oxfmt": "^0.66.0",

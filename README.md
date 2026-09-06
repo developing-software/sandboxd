@@ -32,9 +32,9 @@ Docker must be running on the machine that acts as a worker. Neither toolchain i
 go run ./scripts/dev                               # api :8080, ui :8081, a worker here
 ```
 
-Open <http://localhost:8081>. The worker shows up as a card marked **pending** with an
-approval code printed in the terminal — paste it into the card. Then pick the
-`coding-agent` preset, give it a repo and a prompt, and watch it work.
+Open <http://localhost:8081/hosts>. The worker shows up as a card marked **pending** with
+an approval code printed in the terminal — paste it into the card. Then go to **new**, pick
+the `coding-agent` preset, give it a repo and a prompt, and watch it work.
 
 [Getting started](docs/getting-started.md) has the rest: running the three processes
 separately, skipping the approval code with a join token, and pointing a local UI at a
@@ -47,6 +47,9 @@ deployed control plane.
 | `coding-agent` | A fresh clone on its own branch, then Claude Code, Codex, OpenCode or a shell |
 | `vscode`       | VS Code (code-server) on the repo, in the browser                            |
 | `jupyter`      | JupyterLab or the classic Notebook, in the browser                           |
+| `ubuntu`, `python`, `node` | A shell or a REPL on the stock image; nothing to build              |
+| `http`         | python's http.server on the stock image, behind the preview proxy            |
+| `notebook`     | JupyterLab on the stock docker-stacks image; nothing to build                |
 | `custom`       | Nothing implied: your image, your command, your env                          |
 
 A preset is a folder under `examples/ui/presets/` with a `preset.yaml`, a `Dockerfile`
@@ -60,25 +63,32 @@ The UI speaks presets. The API speaks images. Your app can use either.
 ```bash
 # --- through the UI (:8081): presets, no token in the browser ---
 
-curl -s localhost:8081/sandboxes -H 'content-type: application/json' \
+curl -s localhost:8081/api/sandboxes -H 'content-type: application/json' \
   -d '{"owner_id":"me","repo":"https://github.com/org/repo.git","prompt":"add tests for src/x.ts"}'
 
-curl -s localhost:8081/presets    # every preset's fields, image and preview port
+curl -s localhost:8081/api/presets    # every preset's fields, image and preview port
 
 # --- straight to the API (:8080): image + command + env, with the service token ---
 
 curl -s localhost:8080/sandboxes -H 'authorization: Bearer dev-token' \
-  -H 'content-type: application/json' \
-  -d '{"owner_id":"me","image":"python:3.12","cmd":["python3","-m","http.server","8000"]}'
+  -H 'x-sandboxd-owner: me' -H 'content-type: application/json' \
+  -d '{"image":"python:3.12","cmd":["python3","-m","http.server","8000"]}'
 ```
 
-The API reference is at <http://localhost:8080/doc>, and the document behind it at
-`/openapi.json`. The same document is checked in as [`openapi.json`](openapi.json).
+The token says which app is calling; `x-sandboxd-owner` says which of its users for, and it
+is required on every route that belongs to one.
+
+The API reference is at <http://localhost:8080/doc>, and the two documents behind it at
+`/openapi.yaml` and `/openapi.admin.yaml`. Both are checked in — the client contract as
+[`api/client.yaml`](api/client.yaml), the operator's as
+[`api/admin.yaml`](api/admin.yaml) — and the server serves those bytes rather than a
+rendering of them.
 
 ## Calling it from TypeScript
 
-[`@sandboxd/sdk`](sdk/typescript) is a typed client generated from that document, so the
-shapes below come from the control plane's own handlers rather than from a copy of them.
+[`@sandboxd/sdk`](sdk/typescript) is a typed client generated from `api/client.yaml`, the
+same file the Go server is generated from. The shapes below are the contract itself rather
+than a copy of it.
 
 ```ts
 import { createSandbox, createSandboxd } from '@sandboxd/sdk'
@@ -90,7 +100,8 @@ const client = createSandboxd({
 
 const { data, error } = await createSandbox({
   client,
-  body: { owner_id: 'me', image: 'python:3.12', cmd: ['bash'] },
+  headers: { 'X-Sandboxd-Owner': 'me' },
+  body: { image: 'python:3.12', cmd: ['bash'] },
 })
 ```
 

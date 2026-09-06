@@ -34,5 +34,8 @@
       "rules": { "max-lines-per-function": "off" }
     }
   ],
-  "ignorePatterns": ["**/node_modules/**", "**/dist/**"]
+  // src/admin is hey-api's output from ../../api/admin.yaml, reproduced by `bun run
+  // generate`. Neither the formatter nor the linter touches it: a rule it fails is a note
+  // for the config, not an edit the next generation would undo.
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "src/admin/**"]
 }

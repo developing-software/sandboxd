@@ -1,6 +1,6 @@
 // One sandbox: its facts, its terminal, a preview and the way to end it. The page polls
 // the sandbox and attaches the terminal the moment it is running.
-import type { AttachToken, PreviewToken, SandboxView } from '@sandboxd/sdk'
+import type { Link, SandboxView } from '@sandboxd/sdk'
 import { Client } from './client'
 import { Format } from './format'
 import { $, Shell, esc } from './shell'
@@ -8,7 +8,6 @@ import { Term } from './term'
 
 Shell.init()
 const id = location.pathname.split('/').at(-1)!
-const owner = () => `owner_id=${encodeURIComponent(Shell.owner())}`
 const term = new Term($('term'))
 $('id').textContent = id
 document.title = `${id} · sandboxd`
@@ -16,7 +15,7 @@ document.title = `${id} · sandboxd`
 $<HTMLInputElement>('port').value = new URLSearchParams(location.search).get('port') ?? '3000'
 
 const refresh = Shell.poll(async () => {
-  const s = await Client.get<SandboxView>(`/sandboxes/${id}?${owner()}`)
+  const s = await Client.get<SandboxView>(`/sandboxes/${id}`)
   render(s)
   onStatus(s)
 })
@@ -63,21 +62,22 @@ function onStatus(s: SandboxView) {
   if (s.status === 'running') attach().catch((err) => term.note((err as Error).message, 'bad'))
 }
 
+// Both capabilities are one Link: a URL with the credential already in it, good for a
+// while. The page's only move is to open it, which is why there is no token to hold.
 async function attach() {
-  const body = { owner_id: Shell.owner() }
-  const { wss_url } = await Client.post<AttachToken>(`/sandboxes/${id}/attach-token`, body)
-  term.connect(wss_url)
+  const { url } = await Client.post<Link>(`/sandboxes/${id}/terminal`)
+  term.connect(url)
 }
 
 $('preview').addEventListener('click', async () => {
-  const body = { owner_id: Shell.owner(), port: Number($<HTMLInputElement>('port').value) }
-  await Client.post<PreviewToken>(`/sandboxes/${id}/preview-token`, body).then(
+  const port = Number($<HTMLInputElement>('port').value)
+  await Client.post<Link>(`/sandboxes/${id}/preview`, { port }).then(
     ({ url }) => window.open(url, '_blank'),
     (err) => alert((err as Error).message),
   )
 })
 
 $('end').addEventListener('click', async () => {
-  await Client.del(`/sandboxes/${id}?${owner()}`).catch((err) => alert((err as Error).message))
+  await Client.del(`/sandboxes/${id}`).catch((err) => alert((err as Error).message))
   await refresh()
 })

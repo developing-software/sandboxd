@@ -45,13 +45,17 @@ self-hosted machines and supervise them through a browser terminal.
 | 14  | A driver behind the worker's `Driver` interface. One fleet may mix drivers (revised 2026-09-04): each worker runs one, reports it as a `driver:` tag, and callers pick with sandbox tags. The Docker one is the official client (`github.com/moby/moby/client`, revised 2026-09-05), not the raw Engine API: its `ExecAttach` hands back a hijacked `net.Conn`, which is what lets the port delete the hand-rolled HTTP upgrade                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Sandcastle / TanStack sandbox (they want to own the agent run); the raw Engine API over `net/http` (the hijack is the pain, and it is what the TypeScript worker hand-rolled); `github.com/docker/docker/client` (the same code, but a pre-modules import path pinned at `+incompatible`)                                                                                                                                                                                                                                                                                               |
 | 15  | Presets are data: `presets/<name>/preset.yaml` + `Dockerfile` + `entry.sh`, one image per preset (`sandboxd-<name>:latest`), `image:` override per sandbox (revised 2026-09-03); presets live in `examples/ui` and the API never sees one — it takes image, cmd, env (revised again 2026-09-03)                                                                                                                                                                                                                                                    | One image for every preset; presets as TypeScript modules; caller-supplied image always; per-host image                                                                                                                                                                                                                                                      |
 | 19  | Agent is a per-sandbox choice (`claude` \| `codex` \| `opencode` \| `shell`); one LLM gateway tuple (`base_url`, `api_key`, `model`) is mapped by the entry script onto each harness's own config; defaults (agent, model) live in the image's entry and operators override them with `SANDBOXD_SANDBOX_ENV_*`                                                                                                                                                                                                                                 | Claude-only; per-agent config schemas in the API; per-preset env vars on the CP                                                                                                                                                                                                                                                                              |
-| 16  | Go for the two daemons (revised 2026-09-04, see `PLAN.md`): `cmd/sandboxd-api` and `cmd/sandboxd-worker`, one static binary each, stdlib first. `net/http` + `httputil.ReverseProxy` own the sockets and the preview proxy, `database/sql` + a cgo-free SQLite driver own the state behind consumer-declared interfaces, huma renders the OpenAPI document from the handler types. Bun stays for the reference client only (`examples/ui`). Cut over 2026-09-05: the TypeScript control plane, worker and `packages/core` are deleted, and the repo root is a Go module with no `package.json`. The wire protocol, the HTTP API, the tokens and the SQLite schema did not change | Bun for everything (2026-09-03: `Bun.serve`, `bun:sqlite`, Hono — hand-rolled HTTP and WebSocket framing over tunnel streams, 100 MB JIT binaries, no Kubernetes client); Elysia; multi-runtime targets (Workers, Lambda): the CP is a stateful single instance; Rust (ceremony the size does not need); Go for the UI too (a YAML loader and one HTML page) |
-| 17  | `examples/ui` (revised 2026-09-05): a Bun + Hono app that serves the xterm.js page at `/`, holds the service token, resolves presets, and forwards everything else to the API. The parent-app stand-in, and after the cutover a genuine external client — its own `package.json`, `tsconfig.json` and linter config, importing nothing from this repo but the generated SDK (amended 2026-09-06, decision 22).                                                                                                                                                                                                                                                                                                                                            | No UI; real Svelte frontend; a `/dev` page inside the control plane                                                                                                                                                                                                                                                                                          |
-| 18  | One Go module `sandboxd` at the root (revised 2026-09-04): `cmd/sandboxd-api`, `cmd/sandboxd-worker`, `internal/{wire,cp,worker}`; `depguard` in `.golangci.yml` enforces cp → wire, worker → wire, never each other, `wire` a leaf, and one tree per `cmd`; the dependency list in `PLAN.md` is closed. The control-plane tree is `cp`, not `api`: the binary is the API, the tree is the whole daemon, and `internal/api/httpapi` stutters. `cp` never imports its own subpackages either: it declares the interfaces it needs and `cmd/sandboxd-api` supplies them, which is what keeps the tree acyclic without a wiring framework. Cut over 2026-09-05: `apps/api`, `apps/worker` and `packages/core` are gone, the root has no `package.json` or workspace, and `examples/ui` is a standalone Bun app with its own tooling | Bun workspaces for everything (2026-09-03: `apps/api`, `apps/ui`, `apps/worker`, `packages/core`, fallow as the boundary); one package, `src/{protocol,shared,cp,agent,dev}`; `internal/` alone as the boundary (it only blocks imports from outside the module, not between our own trees); `internal/api` for the control plane (two meanings for one word, and a stuttering HTTP package inside it) |
+| 16  | Go for the two daemons (revised 2026-09-04, see `PLAN.md`): `cmd/sandboxd-api` and `cmd/sandboxd-worker`, one static binary each, stdlib first. `net/http` + `httputil.ReverseProxy` own the sockets and the preview proxy, `database/sql` + a cgo-free SQLite driver own the state behind consumer-declared interfaces, huma renders the OpenAPI document from the handler types. Bun stays for the reference client only (`examples/ui`). Cut over 2026-09-05: the TypeScript control plane, worker and `packages/core` are deleted, and the repo root is a Go module with no `package.json`. The wire protocol, the HTTP API, the tokens and the SQLite schema did not change. Revised 2026-09-06: huma is replaced by `ogen`, and the direction reverses — the document is written and the Go server is generated from it (decision 22). `paths/client`, `ogen/otel` and `ogen/unimplemented` are disabled and ogen is pinned as a `tool` in `go.mod`, so `go generate ./...` needs nothing installed and no OpenTelemetry is linked. Generated validation replaces huma's, and its `validate.Error{Fields}` replaces recovering a field name from huma's prose with a regex. Measured after the cutover, and worse than expected on one axis: the API binary goes from 10 linked module roots to 27, because the generated handlers import `ogenerrors`, which reaches `ogen/openapi` → `jsonschema` → `location` — the *document parser's* diagnostics, and with them zap, goldmark and two YAML loaders. It is not reachable through a feature flag. The size did not follow the count: 18.1 MB before, 17.8 MB after, because huma weighed more per root than what replaced it | Bun for everything (2026-09-03: `Bun.serve`, `bun:sqlite`, Hono — hand-rolled HTTP and WebSocket framing over tunnel streams, 100 MB JIT binaries, no Kubernetes client); Elysia; multi-runtime targets (Workers, Lambda): the CP is a stateful single instance; Rust (ceremony the size does not need); Go for the UI too (a YAML loader and one HTML page); `oapi-codegen` (it does not validate a request body, so `kin-openapi` middleware comes back and with it the error-prose adapter huma forced); staying on huma (~120 of the 630 lines in `internal/cp/http` existed to correct its output: `$schema`, array nullability, nullable enums, and a field name lifted out of a validation sentence); `swaggo/swag` (comment annotations, no compile-time link between handler and document); ogen with its defaults (the client and the OpenTelemetry integration are 4,500 generated lines and three modules we have no use for) |
+| 17  | `examples/ui` (revised 2026-09-05): a Bun + Hono app that serves the xterm.js page at `/`, holds the service token, resolves presets, and forwards everything else to the API. The parent-app stand-in, and after the cutover a genuine external client — its own `package.json`, `tsconfig.json` and linter config, importing nothing from this repo but the generated SDK (amended 2026-09-06, decision 22). Revised 2026-09-06: one page per concern — `/hosts`, `/sandboxes`, `/sandboxes/new`, `/sandboxes/:id` — each an html file plus the TypeScript it references, bundled by `Bun.serve` routes and typed against the SDK's types; the JSON lives under `/api`, so a page URL and its data never collide. xterm.js comes from npm, not a CDN. Same day: the byte proxy is gone — every `/api` route is one generated SDK call, so a route the SDK cannot express is a gap in the document, caught here. | No UI; real Svelte frontend; a `/dev` page inside the control plane; one page holding hosts, the form and the terminal (it grew to 340 lines of untyped script); a client-side router or framework for four pages |
+| 18  | One Go module `sandboxd` at the root (revised 2026-09-04): `cmd/sandboxd-api`, `cmd/sandboxd-worker`, `internal/{wire,cp,worker}`; `depguard` in `.golangci.yml` enforces cp → wire, worker → wire, never each other, `wire` a leaf, and one tree per `cmd`; the dependency list in `PLAN.md` is closed. The control-plane tree is `cp`, not `api`: the binary is the API, the tree is the whole daemon, and `internal/api/httpapi` stutters. `cp` never imports its own subpackages either: it declares the interfaces it needs and `cmd/sandboxd-api` supplies them, which is what keeps the tree acyclic without a wiring framework. Cut over 2026-09-05: `apps/api`, `apps/worker` and `packages/core` are gone, the root has no `package.json` or workspace, and `examples/ui` is a standalone Bun app with its own tooling. Revised 2026-09-06: `internal/openapi` joins `wire` as a leaf, because `internal/cp` consumes the generated request and response types and may not import its own subpackages — the generated package therefore cannot live under `internal/cp/http` | Bun workspaces for everything (2026-09-03: `apps/api`, `apps/ui`, `apps/worker`, `packages/core`, fallow as the boundary); one package, `src/{protocol,shared,cp,agent,dev}`; `internal/` alone as the boundary (it only blocks imports from outside the module, not between our own trees); `internal/api` for the control plane (two meanings for one word, and a stuttering HTTP package inside it); generating into `internal/cp/http/gen` (`internal/cp` would then import its own subpackage, which is the one rule that keeps this tree acyclic without a wiring framework) |
 | 20  | Generic core (`image, cmd, env, secret_env`) + presets as a declarative field→env schema; the image is the plugin, its entry script owns the semantics. The generic half is the API, the preset half is the UI (revised 2026-09-03)                                                                                                                                                                                                                                                                                                            | Agent kinds baked into the protocol and daemon; driver plugins in the daemon; per-preset code on the CP                                                                                                                                                                                                                                                      |
 | 21  | A sandbox is exactly one container, from one Dockerfile (revised 2026-09-04). No sidecars, no per-sandbox network, no readiness probes: none of the presets needed them, and the compose translator, the catalog and the pod lifecycle were the largest part of the code for no user. A repo that needs a database runs it inside the sandbox or points at one outside                                                                                                                                                                         | Sidecar `services` from a compose document plus a catalog (`services.yaml`), added 2026-09-03 and removed here; compose as the runtime (`docker compose up` per session); CP reading `.sandboxd.yaml` from the repo                                                                                                                                          |
-| 22  | The OpenAPI document is a checked-in artifact, `openapi.json` at the root, written by `go run ./scripts/openapi` from the same handler registration the server runs; a Go test fails when it is stale. `sdk/typescript` (`@sandboxd/sdk`) is generated from it by hey-api, its output checked in beside a hand-written entry point that owns the public surface. This amends decision 17: `examples/ui` now depends on one package from this repo, the generated SDK, and on nothing else — it is the proof that the document is usable, which a client that hand-writes its types is not (added 2026-09-06) | A hand-written client per language; generating from a running control plane (a generator would need a booted server and a token); publishing the SDK from a separate repo; leaving `examples/ui` on hand-written types (its `CreateSandbox` had already drifted from a comment saying it should be generated) |
+| 22  | The OpenAPI document is a checked-in artifact, `openapi.json` at the root, written by `go run ./scripts/openapi` from the same handler registration the server runs; a Go test fails when it is stale. `sdk/typescript` (`@sandboxd/sdk`) is generated from it by hey-api, its output checked in beside a hand-written entry point that owns the public surface. This amends decision 17: `examples/ui` now depends on one package from this repo, the generated SDK, and on nothing else — it is the proof that the document is usable, which a client that hand-writes its types is not (added 2026-09-06). Revised 2026-09-06, same day: reversed. `api/client.yaml` is the source, hand-written (and `api/admin.yaml` beside it, decision 27); `internal/openapi` (ogen) and `sdk/typescript/src/generated` (hey-api) are both output, both checked in, and CI regenerates each and fails on a diff. `scripts/openapi` and `internal/cp/http/spec.go` are deleted along with the direction they served. YAML rather than JSON because the document now carries the rationale that used to live in the Go struct tags. `GET /sandboxes/{id}/terminal` stays in the document and out of the generated router: it is a WebSocket upgrade with no `ResponseWriter` to hand a handler, so `net/http` takes the route before ogen sees it. `GET /tunnel` stays out of the document entirely — the worker speaks the wire protocol below, not this API. `api/` is also a Go package: it embeds both documents so the control plane serves the exact bytes it was generated from, rather than a rendering of them that could disagree | A hand-written client per language; generating from a running control plane (a generator would need a booted server and a token); publishing the SDK from a separate repo; leaving `examples/ui` on hand-written types (its `CreateSandbox` had already drifted from a comment saying it should be generated); keeping the document an artifact of the handlers (every one of the generator's opinions had to be corrected afterwards, and a hand-written path item for `/attach` was Go that built a `huma.PathItem`); a second document for `/attach` in AsyncAPI (one socket does not earn a second contract) |
 | 23  | Every list and map in a response is empty rather than null, and a nullable field carrying an enum lists `null` among its values (added 2026-09-06). A nil Go slice marshals as `null`, so huma marked every array nullable and every generated field `T[] \| null` — while `GET /sandboxes` was already returning `[]`. `HostView.capacity` is the one field that is absent rather than null: huma refuses to type a nullable object reference, and `online` already says whether there is a number to read | Leaving the document as huma renders it (a generated client unwraps a null the API never sends, and reads `ended_reason` as always present); `omitempty` everywhere (an absent key and a null are different to a caller, per `internal/cp/api.go`)                                                                       |
+| 24  | `owner_id` is a header, `X-Sandboxd-Owner`, on every route that scopes to one owner, and it is required (added 2026-09-06). It travelled four ways at once: a field in the `POST /sandboxes` body, a query parameter on `GET`/`DELETE /sandboxes/{id}`, a request body on both token mints — a `POST` body whose only field was the owner — and absent from `GET /sandboxes`, where absence meant every owner's sandboxes. It is a credential that narrows the service token, not payload, so it belongs beside the token. There is no unscoped listing at all: `GET /sandboxes` is this owner's, and the fleet-wide view is not a route a parent app can reach by omitting something. Breaking, and taken deliberately while the document was rewritten | Leaving it in three places (a generated client shows the inconsistency to every caller); a query parameter everywhere (it is a credential, and query strings are logged); keeping the unscoped list as the no-parameter default (the failure mode is a parent app enumerating the fleet, which is the worst possible default); a separate `GET /sandboxes/all` (a second route, and a second thing to secure, for a view nothing has asked for yet) |
+| 25  | A mutation with nothing to say answers `204` (added 2026-09-06). `POST /hosts/{id}/approve` and `POST /hosts/{id}/revoke` returned `{"ok": true}` typed as `enum: [true]` — a body that carries one bit, and that bit is the status code. The `Ok` schema goes with them. `GET /healthz` keeps a body, because a probe is the one place worth having room to say more than "up" later | `200 {ok:true}` (a generated client unwraps a field that can only hold one value); `DELETE /hosts/{id}` for revoke (a revoked host is a row we keep, not one we remove — it is rejected on its next hello) |
+| 26  | A minted capability is a URL, not a token (added 2026-09-06). `POST /sandboxes/{id}/terminal` and `POST /sandboxes/{id}/preview` each answer with one `Link` — `{url, expires_in_s}` — and the token rides inside the URL. The caller's only move was ever to hand the URL to a browser: the reference client destructured `wss_url` and `url` and ignored `token` and the rest, which is what a field nobody reads looks like. The terminal is one path with two methods, `POST` to get the link and `GET` to be upgraded on it, so the resource and the socket share a name; the browser's `GET` carries neither bearer nor owner header, because a WebSocket cannot send one and the token in the query is the whole gate. Preview still names its port in the body — a sandbox has many, and the URL is per-port | Returning `{token, wss_url, expires_in_s}` and `{token, url, expires_in_s}` (two schemas and three fields for one string that clients used); a top-level `GET /attach?token=` (the sandbox is already in the path everywhere else, and the socket belongs beside the resource it opens); folding the mint into `SandboxView` (a capability in every list response, minted on every read) |
+| 27  | Two documents, and only one of them is a promise (added 2026-09-06). `api/client.yaml` is the client contract — sandboxes, the terminal, previews, the probe — and `sdk/typescript` is generated from it, so it changes carefully. `api/admin.yaml` is the operator surface — enrolling workers and looking at the fleet — with no published client and no stability claim; it breaks whenever the operator is better served. They generate into `internal/openapi` and `internal/adminapi`, two leaves beside `wire`, and mount on the same listener behind the same `Bearer` today. `ErrorModel` and `Issue` are duplicated rather than `$ref`'d across files, so neither document needs the other to resolve and neither generator reads two: the shapes must agree because one Go error mapping serves both, but that is a fact about the code, not a dependency between contracts. Giving the operator its own credential is now a change to one scheme in one file | One document with tags (a published SDK then carries `approveHost` and `revokeHost`, and every fleet change is a breaking change to a parent app's client); filtering one rendered document by tag (the served document and the checked-in one then describe different route sets); a shared `api/common.yaml` (it re-couples the two contracts the split exists to separate, for twenty lines); generating an admin TypeScript client into `sdk/typescript` (publishing it is the stability claim we are declining to make — `examples/ui` generates its own locally) |
 
 ## Topology
 
@@ -103,12 +107,15 @@ POST /sandboxes ──► queued ──► creating ──► running ──► 
 
 ## Trust
 
-- **Parent → CP:** `Authorization: Bearer <SANDBOXD_SERVICE_TOKEN>`. Every request
-  carries `owner_id`; CP enforces `sandbox.owner_id == owner_id`. CP has no
-  user table.
-- **Browser → terminal:** parent calls `POST /sandboxes/:id/attach-token`
-  (60 s, single sandbox). Browser opens `wss://cp/attach?token=…`.
-- **Browser → preview:** parent calls `POST /sandboxes/:id/preview-token`
+- **Parent → CP:** `Authorization: Bearer <SANDBOXD_SERVICE_TOKEN>`, and
+  `X-Sandboxd-Owner` beside it on every owner-scoped route (decision 24); CP enforces
+  `sandbox.owner_id == the header`. CP has no user table. Both `/sandboxes` and `/hosts`
+  answer to the one token today: splitting the operator surface onto its own credential is
+  a second token and a switch in one `SecurityHandler`, not a new middleware.
+- **Browser → terminal:** parent calls `POST /sandboxes/:id/terminal` (60 s, single
+  sandbox) and gets back a URL with the token already in it. Browser opens
+  `wss://cp/sandboxes/:id/terminal?token=…`; the token is the whole gate there.
+- **Browser → preview:** parent calls `POST /sandboxes/:id/preview` with a port
   (10 m). Browser hits `https://3000-s_x.preview.<domain>/?t=…`; CP verifies,
   sets a signed, subdomain-scoped cookie, redirects to `/`. The cookie also
   gates WebSocket upgrades; the upstream never sees it. The proxy forwards
@@ -159,50 +166,78 @@ the field name for a sandbox id (decision 5): the resource was renamed, the fiel
 ## HTTP API (parent → CP)
 
 The API is generic: a body names an image, a command and env. Presets and the browser
-page live in `examples/ui`, the reference client, which turns a friendly request into this. Every request and response shape is declared once in
-`internal/cp/api.go` (Go structs with tags) and read by huma for validation, for `GET /openapi.json`
-(rendered at `GET /doc`) and by the example client. Errors are `{error, issues?}`; a
-validation failure lists every failing field. Unknown body keys are a 400, so a `repo`
-or `preset` sent here says the caller meant the UI.
+page live in `examples/ui`, the reference client, which turns a friendly request into this.
 
-`openapi.json` at the repo root is the same document as a file, written by
-`go run ./scripts/openapi` and checked in; `internal/cp/http/spec_test.go` fails when it
-is stale. `sdk/typescript` is generated from it (decision 22). Response invariants a
-generated client is typed on: every list and map is present and empty rather than null,
-`ended_reason` includes `null` in its enum, and `capacity` is absent while a host is
-offline (decision 23).
+`api/client.yaml` is the contract and it is written, not rendered: `internal/openapi` is
+ogen's server and types generated from it, `sdk/typescript` is hey-api's client generated
+from the same file, and CI regenerates both and fails on a diff (decision 22). Validation is
+generated too, so a constraint is stated once, in the document. It is served at
+`GET /openapi.yaml`, the operator's at `GET /openapi.admin.yaml`, and both are rendered at
+`GET /doc`. The bytes served are the files themselves — a small `api` package embeds them —
+so the served document and the checked-in one cannot disagree. The operator's routes are a second document,
+`api/admin.yaml` → `internal/adminapi`, with no published client and no stability claim
+(decision 27). Errors are `{error, issues?}`; a validation
+failure lists every failing field. Unknown body keys are a 400, so a `repo` or `preset` sent
+here says the caller meant the UI.
+
+`X-Sandboxd-Owner` carries the owner on every route that belongs to one, and is required on
+each (decision 24): it narrows the service token rather than describing the request, so it
+travels beside the token. A sandbox owned by somebody else is indistinguishable from a
+missing one. Response invariants a generated client is typed on: every list and map is
+present and empty rather than null, `ended_reason` includes `null` in its enum, and
+`capacity` is absent while a host is offline (decision 23).
 
 ```
-GET    /healthz  /openapi.json  /doc    public
-GET    /hosts                           list (status, online, running/max, tags)
-POST   /hosts/:id/approve   {code}
-POST   /hosts/:id/revoke
-POST   /sandboxes           {owner_id, image, cmd?: string[], env?, secret_env?, idle_timeout_s?, tags?: string[]}
+client (api/client.yaml — the contract; a published SDK comes from this)
+GET    /healthz  /openapi.yaml  /openapi.admin.yaml  /doc   public
+POST   /sandboxes           {image, cmd?: string[], env?, secret_env?, idle_timeout_s?, tags?: string[]}
                             tags: every one must be present on a host for it to be a candidate.
                             422 when no approved host carries them all; queues when they are just full.
                             TERM and SANDBOXD_SESSION_ID are reserved env names.
                             Operator defaults for every sandbox: SANDBOXD_SANDBOX_ENV_<NAME>=value,
                             shorthands SANDBOXD_LLM_BASE_URL / SANDBOXD_LLM_API_KEY (or LLM_BASE_URL / LLM_API_KEY).
                             Precedence: secret_env > env > operator > entry.sh default.
-GET    /sandboxes?owner_id=
-GET    /sandboxes/:id?owner_id=
-DELETE /sandboxes/:id?owner_id=
-POST   /sandboxes/:id/attach-token  {owner_id}       → {token, wss_url, expires_in_s}
-POST   /sandboxes/:id/preview-token {owner_id, port} → {token, url, expires_in_s}
-GET    /attach?token=                   WebSocket (xterm ↔ pty); public, the token is the gate
+GET    /sandboxes                       this owner's, newest first; there is no unscoped list
+GET    /sandboxes/:id
+DELETE /sandboxes/:id
+POST   /sandboxes/:id/terminal               → {url, expires_in_s}   wss://, 60 s
+GET    /sandboxes/:id/terminal?token=   the socket itself (xterm ↔ pty). No bearer, no owner
+                                        header: a WebSocket cannot send one and the token is
+                                        the gate. In the document, out of the generated
+                                        router — an upgrade has no ResponseWriter to hand a
+                                        handler, so net/http takes the route first.
+POST   /sandboxes/:id/preview  {port}        → {url, expires_in_s}   https://, 10 min
+
+admin (api/admin.yaml — operator surface; no published client, breaks freely)
+GET    /hosts                           list (status, online, running/max, tags)
+POST   /hosts/:id/approve   {code}      → 204
+POST   /hosts/:id/revoke                → 204
+
+neither document
+GET    /tunnel                          worker only: it speaks the wire protocol above,
+                                        not this API
 *      <port>-<sid>.preview.<domain>/*  preview proxy (HTTP + WebSocket)
 ```
 
 ## UI (parent-app stand-in, `examples/ui`)
 
 Holds the service token and the presets (`examples/ui/presets/<name>/preset.yaml`). Serves
-the xterm.js page at `/`. Talks to the API with `fetch`; the browser never
-holds the token.
+one page per concern — `/hosts`, `/sandboxes`, `/sandboxes/new`, `/sandboxes/:id` (the
+terminal); `/` redirects to the list — and the JSON under `/api`, one generated
+`@sandboxd/sdk` call per route, no byte proxy. The browser never holds the token. It sends
+the owner as `X-Sandboxd-Owner` on every call; the header is required by the document, so
+the generated client asks for it rather than the API answering 400 (decision 24).
+
+`/api/hosts` is the exception to "one SDK call per route": the fleet is not in the published
+SDK (decision 27), so `examples/ui` generates its own types from `api/admin.yaml` into its
+own tree. That is the arrangement working as intended — the operator surface may break here
+without breaking a parent app — and it is the price of the split, paid by the one client
+that wants both halves.
 
 ```
-GET    /presets                         [{name, description, image, cmd, idle_timeout_s, preview: {port, port_field},
+GET    /api/presets                     [{name, description, image, cmd, idle_timeout_s, preview: {port, port_field},
                                           fields: [{name, type, env, required, secret, default?, values?, min?, max?, multiline?, description?}]}]
-POST   /sandboxes           {owner_id, preset?, image?, cmd?, env?, secret_env?, idle_timeout_s?, …preset fields}
+POST   /api/sandboxes       {owner_id, preset?, image?, cmd?, env?, secret_env?, idle_timeout_s?, …preset fields}
                             presets: `preset` names a folder; without it, the first preset whose `claims_when` fields are
                                     present wins (coding-agent claims `repo`), else `custom`. Each preset's fields map onto
                                     env for its image; absent fields emit nothing, so operator defaults survive. Shipped:
@@ -219,7 +254,9 @@ POST   /sandboxes           {owner_id, preset?, image?, cmd?, env?, secret_env?,
                                     custom        nothing implied; image from the caller, else SANDBOXD_DEFAULT_IMAGE (of the UI)
                             a preset may default image / cmd / idle_timeout_s; caller-supplied values win;
                             caller env/secret_env are merged over the preset's. The result is POST /sandboxes on the API.
-*                                       everything else is forwarded to the API with the service token added
+GET    /api/hosts   POST /api/hosts/:id/{approve,revoke}   GET|DELETE /api/sandboxes/:id
+                            the three host routes are generated from api/admin.yaml here, not from the SDK
+POST   /api/sandboxes/:id/{terminal,preview}   openTerminal and openPreview; the Link relayed as is
 ```
 
 Browser attach WS: binary frames = PTY bytes both ways; text frame
@@ -303,32 +340,38 @@ and a deployed unit under `Restart=always` must never crash-loop on a version bu
 One Go module, and one example client that is not part of it.
 
 ```
+api/                    client.yaml  admin.yaml  ogen.yml  api.go      the contracts, and the package that embeds them
 internal/wire/          messages.go  framing.go  ids.go  + testdata/    the wire contract; a leaf
-internal/cp/            errors.go  api.go  config.go  env.go  tokens.go  scheduler.go  sandboxes.go
+internal/openapi/       oas_*_gen.go                            ogen, from api/client.yaml; a leaf, never edited
+internal/adminapi/      oas_*_gen.go                            ogen, from api/admin.yaml; a leaf, never edited
+internal/cp/            errors.go  config.go  env.go  tokens.go  capacity.go  scheduler.go  sandboxes.go
 internal/cp/store/      model.go  sqlite.go                     the only package that speaks SQL
 internal/cp/hosts/      conn.go  stream.go  hub.go  enrollment.go  service.go   one Conn per worker; Stream is a net.Conn
 internal/cp/attach/     bridge.go                                browser terminal <-> PTY
 internal/cp/preview/    proxy.go                                 ReverseProxy over a tunnel stream
-internal/cp/http/       routes.go  sandbox.go  host.go  service.go  errors.go   huma; the only place a status code lives
+internal/cp/http/       routes.go  auth.go  sandbox.go  host.go  errors.go    the two Handlers; the only place a status code lives
 internal/worker/        config.go  ring.go  sandboxes.go  tunnel.go
 internal/worker/driver/ driver.go  docker.go                    (kubernetes.go next)
 cmd/sandboxd-api/      main.go                                  wiring only
 cmd/sandboxd-worker/   main.go                                  wiring only
 scripts/dev/           main.go                                  the whole stack in one terminal; not shipped
-scripts/openapi/       main.go                                  writes openapi.json; not shipped
-openapi.json                                                    the document as a file; generated, checked in
 sdk/typescript/        openapi-ts.config.ts  src/index.ts       @sandboxd/sdk; the hand-written entry point
 sdk/typescript/src/generated/                                   hey-api output; regenerated, never edited
-examples/ui/src/       main.ts  config.ts  app.ts  sandboxes.ts  index.html  errors.ts  json.ts  log.ts
+examples/ui/src/       main.ts  config.ts  api.ts  sandboxes.ts  errors.ts  json.ts  log.ts
+examples/ui/src/pages/ hosts  sandboxes  new  sandbox (.html + .ts each)   one page per concern, bundled by Bun
+examples/ui/src/pages/ shell.ts  client.ts  format.ts  term.ts  style.css   what the pages share
 examples/ui/src/presets/ index.ts  types.ts  schema.ts  preset.ts  loader.ts   yaml -> Preset; registry
-examples/ui/presets/   build.ts                                 one image per preset
-examples/ui/presets/<name>/ preset.yaml  Dockerfile  entry.sh  …   coding-agent  vscode  jupyter  custom (no image)
+examples/ui/presets/   build.ts                                 one image per preset with a Dockerfile
+examples/ui/presets/<name>/ preset.yaml  Dockerfile  entry.sh  …   coding-agent  vscode  jupyter; ubuntu  python  node  http  notebook (stock images); custom (no image)
 <pkg>_test.go          beside the source it tests; examples/ui/test/ for the client
 ```
 
 Commands: `go build ./...`, `go test ./...`, `golangci-lint run`, `go run ./scripts/dev`,
 `nix build .#api`. In `examples/ui`: `bun run dev`, `bun run image [preset…]`, `bun test`.
-In `sdk/typescript`: `bun run generate` after `go run ./scripts/openapi -o openapi.json`.
+After editing either document in `api/`: `go generate ./...` for the Go half, and
+`bun run generate` in `sdk/typescript` when `client.yaml` changed. CI runs both and fails on
+a diff, so the generated trees can only be current. `admin.yaml` has no SDK step — that is
+the point of it.
 
 ## Explicitly out of scope for v1
 

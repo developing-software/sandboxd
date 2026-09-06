@@ -1,0 +1,6 @@
+{
+  // src/admin is hey-api's output from ../../api/admin.yaml. Its unused types and its
+  // duplicate `Client`/`Config` are the generator's shape, not this app's dead code, and
+  // deleting them is a change the next `bun run generate` undoes.
+  "ignorePatterns": ["src/admin/**"]
+}

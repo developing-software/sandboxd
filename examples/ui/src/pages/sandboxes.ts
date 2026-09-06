@@ -4,10 +4,7 @@ import { Format } from './format'
 import { $, Shell, esc } from './shell'
 
 Shell.init()
-Shell.poll(async () => {
-  const owner = encodeURIComponent(Shell.owner())
-  render(await Client.get<SandboxView[]>(`/sandboxes?owner_id=${owner}`))
-})
+Shell.poll(async () => render(await Client.get<SandboxView[]>('/sandboxes')))
 
 function render(list: SandboxView[]) {
   $('sandboxes').innerHTML =

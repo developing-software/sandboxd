@@ -3,7 +3,14 @@
   "semi": false,
   "singleQuote": true,
   "printWidth": 95,
-  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/*.html", "*.yaml", "*.yml"],
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/*.html",
+    "*.yaml",
+    "*.yml",
+    "src/admin/**"
+  ],
   "overrides": [
     {
       "files": ["**/*.md"],

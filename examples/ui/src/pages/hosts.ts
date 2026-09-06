@@ -1,4 +1,6 @@
-import type { HostView } from '@sandboxd/sdk'
+// The fleet is not in the published SDK: these types are generated here from
+// api/admin.yaml, and may change when the operator surface does (decision 27).
+import type { HostView } from '../admin/types.gen'
 import { Client } from './client'
 import { $, Shell, esc } from './shell'
 

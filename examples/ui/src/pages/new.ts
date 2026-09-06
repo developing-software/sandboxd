@@ -115,7 +115,6 @@ $('form').addEventListener('submit', async (e) => {
       .map((t) => t.trim())
       .filter(Boolean)
     const body: Record<string, unknown> = {
-      owner_id: Shell.owner(),
       preset: select.value,
       image: value('image').trim() || undefined,
       cmd: parseCmd(value('cmd')),

@@ -6,34 +6,38 @@
 ## Stack
 
 **This is a Go repository.** One module, `sandboxd`, at the root: two daemons, one wire
-contract, two dev runners. The TypeScript is `sdk/typescript`, generated from the API's
-own OpenAPI document, and `examples/ui`, the reference client — a Bun app that imports
-nothing from here but that SDK (`DESIGN.md` decisions 16, 17, 18 and 22).
+contract, two dev runners. The two HTTP contracts in `api/` are written by hand and
+everything else about them is generated — ogen's servers for Go, hey-api's client for
+`sdk/typescript` — and `examples/ui` is the reference client, a Bun app that imports
+nothing from here but that SDK (`DESIGN.md` decisions 16, 17, 18, 22 and 27).
 
-| Path                    | What                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `internal/wire`         | The wire contract: messages, framing, ids. A leaf.                               |
-| `internal/cp`           | The control plane: config, tokens, scheduler, sandbox use cases                  |
-| `internal/cp/store`     | SQLite. The only package that speaks SQL.                                        |
-| `internal/cp/hosts`     | Worker tunnels: enrollment, the hub, and a stream that is a `net.Conn`           |
-| `internal/cp/attach`    | Browser terminal ↔ PTY                                                           |
-| `internal/cp/preview`   | `<port>-<sid>.<domain>` → a port inside a sandbox, over `httputil.ReverseProxy`  |
-| `internal/cp/http`      | huma: routes, validation, the OpenAPI document. The only place a status code lives |
-| `internal/worker`       | The per-host daemon: driver, PTYs, one outbound tunnel                           |
-| `internal/worker/driver`| Docker today (moby client); Kubernetes next                                      |
-| `cmd/sandboxd-api`      | Wiring only, one binary                                                          |
-| `cmd/sandboxd-worker`   | Wiring only, one binary                                                          |
-| `scripts/dev`           | `go run ./scripts/dev` — the whole stack in one terminal. Not shipped.           |
-| `scripts/openapi`       | Writes `openapi.json`. Not shipped.                                              |
-| `openapi.json`          | The document as a file. Generated and checked in; never hand-edited.             |
-| `sdk/typescript`        | `@sandboxd/sdk`. `src/generated` is hey-api's output; `src/index.ts` is ours.    |
+| Path                    | What                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `api`                   | `client.yaml` and `admin.yaml`, hand-written. The source both generators read.     |
+| `internal/wire`         | The wire contract: messages, framing, ids. A leaf.                                |
+| `internal/openapi`      | ogen's server and types, from `api/client.yaml`. Generated, never edited. A leaf. |
+| `internal/adminapi`     | ogen's server and types, from `api/admin.yaml`. Generated, never edited. A leaf.  |
+| `internal/cp`           | The control plane: config, tokens, scheduler, sandbox use cases                   |
+| `internal/cp/store`     | SQLite. The only package that speaks SQL.                                         |
+| `internal/cp/hosts`     | Worker tunnels: enrollment, the hub, and a stream that is a `net.Conn`            |
+| `internal/cp/attach`    | Browser terminal ↔ PTY                                                            |
+| `internal/cp/preview`   | `<port>-<sid>.<domain>` → a port inside a sandbox, over `httputil.ReverseProxy`   |
+| `internal/cp/http`      | The two generated `Handler`s, the bearer check, and the only place a status lives  |
+| `internal/worker`       | The per-host daemon: driver, PTYs, one outbound tunnel                            |
+| `internal/worker/driver`| Docker today (moby client); Kubernetes next                                       |
+| `cmd/sandboxd-api`      | Wiring only, one binary                                                           |
+| `cmd/sandboxd-worker`   | Wiring only, one binary                                                           |
+| `scripts/dev`           | `go run ./scripts/dev` — the whole stack in one terminal. Not shipped.            |
+| `sdk/typescript`        | `@sandboxd/sdk`. `src/generated` is hey-api's output; `src/index.ts` is ours.     |
 | `examples/ui`           | The reference client: service token, presets, the xterm.js page. Its own `AGENTS.md`. |
-| `examples/ui/presets`   | Data. One folder per preset with its Dockerfile. Built by `bun run image` there.  |
+| `examples/ui/presets`   | Data. One folder per preset with its Dockerfile. Built by `bun run image` there.   |
 
 `cp` and `worker` only meet on the wire: both import `wire`, neither imports the other,
 and `wire` imports nothing of ours. `cp` never imports its own subpackages — it declares
-the interfaces it needs and `cmd/sandboxd-api` supplies them. Declared in `.golangci.yml`
-as `depguard` rules, enforced by `golangci-lint`.
+the interfaces it needs and `cmd/sandboxd-api` supplies them, and it consumes the
+generated request and response types directly, which is why `internal/openapi` is a leaf
+beside `wire` rather than a package under `cp/http`. Declared in `.golangci.yml` as
+`depguard` rules, enforced by `golangci-lint`.
 
 ## Commands
 
@@ -44,7 +48,7 @@ as `depguard` rules, enforced by `golangci-lint`.
 | `go vet ./...`                 |                                                                 |
 | `golangci-lint run`            | Lint, including the `depguard` import boundary                  |
 | `golangci-lint fmt`            | `gofumpt`, run through the linter so the version is pinned once |
-| `go run ./scripts/openapi -o openapi.json` | Refresh the document after changing a handler       |
+| `go generate ./...`           | Regenerate `internal/openapi` and `internal/adminapi` from `api/`   |
 | `go run ./scripts/dev`         | API, worker and UI together [DO NOT RUN unless the user asks]   |
 | `go run ./cmd/sandboxd-api`    | Control plane [DO NOT RUN unless the user asks]                 |
 | `go run ./cmd/sandboxd-worker` | A worker on this machine [DO NOT RUN unless the user asks]      |
@@ -61,10 +65,11 @@ Before handing work back:
 
 **That is the gate.** `sdk/typescript` and `examples/ui` have their own; CI runs all three.
 
-A change to a request or response type is three steps, in order: the Go struct in
-`internal/cp/api.go`, then `go run ./scripts/openapi -o openapi.json`, then
-`bun run generate` in `sdk/typescript`. `internal/cp/http/spec_test.go` fails if you stop
-after the first, and CI fails if you stop after the second.
+A change to a request or response type starts in `api/client.yaml` — the document leads, the
+code follows. Then `go generate ./...` for the Go half, and `bun run generate` in
+`sdk/typescript` for the TypeScript one. Both trees are checked in and CI regenerates each
+and fails on a diff, so stopping after the first step is caught. `api/admin.yaml` has no SDK
+step: the operator surface has no published client, which is what lets it break (decision 27).
 
 ## Go
 

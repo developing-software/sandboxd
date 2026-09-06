@@ -9,9 +9,11 @@ const deps = (defaultImage: string | null = null) => ({
   presets: new PresetRegistry(loaded.presets),
 })
 
+// The owner is absent from every case below because it is no longer part of this body: it
+// is a header on the call, so it never reaches buildCreate (decision 24).
+
 test('preset picked by repo; caller image, cmd, idle and env win over the preset', () => {
   const b = buildCreate(deps(), {
-    owner_id: 'me',
     repo: 'https://x/r.git',
     prompt: 'p',
     env: { EXTRA: '1', PROMPT: 'override' },
@@ -19,19 +21,17 @@ test('preset picked by repo; caller image, cmd, idle and env win over the preset
     secret_env: { S: 'x' },
   })
   expect(b).toEqual({
-    owner_id: 'me',
     image: 'sandboxd-coding-agent:latest',
     env: { REPO: 'https://x/r.git', PROMPT: 'override', EXTRA: '1' },
     secret_env: { GIT_TOKEN: 'gt', S: 'x' },
   })
-  const j = buildCreate(deps(), { owner_id: 'me', preset: 'jupyter' })
+  const j = buildCreate(deps(), { preset: 'jupyter' })
   expect([j.image, j.cmd, j.idle_timeout_s]).toEqual([
     'sandboxd-jupyter:latest',
     undefined,
     4 * 3600,
   ])
   const c = buildCreate(deps(), {
-    owner_id: 'me',
     preset: 'jupyter',
     image: 'mine',
     cmd: ['sh'],
@@ -41,22 +41,16 @@ test('preset picked by repo; caller image, cmd, idle and env win over the preset
 })
 
 test('custom: image from the caller, else the configured default, else a 400', () => {
-  expect(buildCreate(deps('dflt:1'), { owner_id: 'me' }).image).toBe('dflt:1')
-  expect(buildCreate(deps(), { owner_id: 'me', image: 'python:3.12' }).image).toBe(
-    'python:3.12',
-  )
-  expect(() => buildCreate(deps(), { owner_id: 'me' })).toThrow(/implies no image/)
-  expect(() => buildCreate(deps(), {})).toThrow(/owner_id is required/)
+  expect(buildCreate(deps('dflt:1'), {}).image).toBe('dflt:1')
+  expect(buildCreate(deps(), { image: 'python:3.12' }).image).toBe('python:3.12')
+  expect(() => buildCreate(deps(), {})).toThrow(/implies no image/)
   expect(() => buildCreate(deps(), 'nope')).toThrow(/JSON object/)
-  expect(() => buildCreate(deps(), { owner_id: 'me', preset: 'nope' })).toThrow(
-    /preset must be one of/,
-  )
-  expect(() => buildCreate(deps(), { owner_id: 'me', image: 'i', env: { A: 1 } })).toThrow(
+  expect(() => buildCreate(deps(), { preset: 'nope' })).toThrow(/preset must be one of/)
+  expect(() => buildCreate(deps(), { image: 'i', env: { A: 1 } })).toThrow(
     /env.A must be a string/,
   )
   // Unknown keys are not the UI's to judge: the API's strict schema names them.
-  expect(buildCreate(deps(), { owner_id: 'me', image: 'i', services: ['pg'] })).toEqual({
-    owner_id: 'me',
+  expect(buildCreate(deps(), { image: 'i', services: ['pg'] })).toEqual({
     image: 'i',
     env: {},
     secret_env: {},

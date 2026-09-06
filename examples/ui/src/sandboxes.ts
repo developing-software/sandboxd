@@ -5,8 +5,9 @@ import { Err } from './errors'
 import { Json } from './json'
 import type { PresetRegistry } from './presets/index'
 
-// CreateSandbox is generated from the control plane's own OpenAPI document, so a field
-// added there is a type error here rather than a 400 at runtime.
+// CreateSandbox is generated from api/client.yaml, the control plane's contract, so a
+// field added there is a type error here rather than a 400 at runtime. The owner is not in
+// it: it is a header on the call, not payload (decision 24).
 export type { CreateSandbox }
 
 export interface BuildDeps {
@@ -16,8 +17,6 @@ export interface BuildDeps {
 
 export function buildCreate(d: BuildDeps, raw: unknown): CreateSandbox {
   if (!Json.isObj(raw)) throw Err.badRequest('body must be a JSON object')
-  if (typeof raw.owner_id !== 'string' || !raw.owner_id)
-    throw Err.badRequest('owner_id is required')
   const preset = d.presets.resolve(raw)
   const x = preset.expand(raw)
 
@@ -29,7 +28,6 @@ export function buildCreate(d: BuildDeps, raw: unknown): CreateSandbox {
     )
 
   const out: CreateSandbox = {
-    owner_id: raw.owner_id,
     image,
     env: { ...x.env, ...(raw.env === undefined ? {} : strings(raw.env, 'env')) },
     secret_env: {

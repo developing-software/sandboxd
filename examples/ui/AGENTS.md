@@ -9,6 +9,13 @@ daemons without blocking anything. The one thing it imports from the repo is
 `@sandboxd/sdk` (`sdk/typescript`), the generated client — which is the point: this app is
 the proof that the published SDK is usable, on the server and in the browser.
 
+The fleet is the exception, and a deliberate one. Enrolling workers and listing hosts live
+in `api/admin.yaml`, a second document with no published client so that it can break
+whenever the operator surface is better for it (`DESIGN.md` decision 27). This app wants
+both halves, so it generates that one itself: `bun run generate` writes `src/admin/` from
+`../../api/admin.yaml`, checked in and never edited. The churn lands here instead of in a
+parent app's SDK, which is the arrangement working rather than a gap in it.
+
 Two halves, composed in `src/main.ts` by one `Bun.serve`:
 
 - **Pages**, `src/pages/`. One `.html` + `.ts` pair per concern, bundled by Bun from the
@@ -32,14 +39,20 @@ And the rest:
 
 ## Rules
 
-- **Every call to the control plane is a generated SDK function.** `listHosts`,
-  `approveHost`, `getSandbox`, `mintAttachToken`, … — never `fetch` against a URL this
-  app spelled itself, and no byte proxy: a path the document does not name is a 404
-  here. This is what makes the app the proof that the document is usable — a route the
-  SDK cannot express is a gap in the document, and the place to fix it is the Go handler.
-  The API's answer goes back status and body untouched. A type this app needs comes from
-  the SDK; never re-declare one here. A page reads a response as the SDK's view type
-  (`HostView`, `SandboxView`, …) — a type-only import, so no SDK code reaches the browser.
+- **Every call to the control plane is a generated function.** `getSandbox`,
+  `openTerminal`, `listHosts`, … — from `@sandboxd/sdk` for anything a client does, from
+  `src/admin/` for the three fleet routes. Never `fetch` against a URL this app spelled
+  itself, and no byte proxy: a path neither document names is a 404 here. This is what
+  makes the app the proof that the documents are usable — a route no generated client can
+  express is a gap in `api/`, and the place to fix it is the YAML, not a handler. The
+  API's answer goes back status and body untouched. A type this app needs comes from one
+  of the two generated trees; never re-declare one here. A page reads a response as its
+  view type (`SandboxView` from the SDK, `HostView` from `src/admin/types.gen`) — a
+  type-only import, so no client code reaches the browser.
+- **The owner is a header, `X-Sandboxd-Owner`, all the way down.** The page sends it on
+  every `/api` call (`client.ts`), and `api.ts` forwards it to the control plane, because
+  that is where the contract puts it (decision 24). It is never a query parameter and
+  never a body field, here or there.
 - **A page URL is never a JSON URL.** Pages are `Bun.serve` routes; JSON is `/api/*`.
   A new kind of data is a new `/api` route, not a page that answers both.
 - **Validation of what the API owns stays in the API.** This app checks what only it can
