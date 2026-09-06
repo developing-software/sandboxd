@@ -1,7 +1,9 @@
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The working branch is `dev`; `main` is the release branch.
-- `DESIGN.md` is the signed v1 contract. A behaviour change is a decision-table edit
-  there first, then code.
+- `VISION.md` is what this is and is not; permanent. `PLAN.md` is what is being built
+  next; temporary. Decisions and what they rejected are ADRs under `docs/adr/` (being
+  written; code comments still cite them as `DESIGN.md decision N` until then). A
+  behaviour change is an ADR first, then code.
 
 ## Stack
 
@@ -9,7 +11,7 @@
 contract, two dev runners. The two HTTP contracts in `api/` are written by hand and
 everything else about them is generated — ogen's servers for Go, hey-api's client for
 `sdk/typescript` — and `examples/ui` is the reference client, a Bun app that imports
-nothing from here but that SDK (`DESIGN.md` decisions 16, 17, 18, 22 and 27).
+nothing from here but that SDK.
 
 | Path                    | What                                                                              |
 | ----------------------- | --------------------------------------------------------------------------------- |
@@ -75,7 +77,7 @@ step: the operator surface has no published client, which is what lets it break 
 ## Go
 
 Stdlib first. The direct dependencies in `go.mod` are a **closed** list — adding a module
-is a `DESIGN.md` row, not a judgement call.
+is an ADR, not a judgement call.
 
 - **A package is a noun, a function is a verb.** `wire.Decode`, `store.SQLite`,
   `hosts.Hub`. Never `wire.DecodeWireMessage`: the package name is already in the call.

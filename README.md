@@ -36,10 +36,6 @@ Open <http://localhost:8081/hosts>. The worker shows up as a card marked **pendi
 an approval code printed in the terminal — paste it into the card. Then go to **new**, pick
 the `agent` preset, give it a repo and a prompt, and watch it work.
 
-[Getting started](docs/getting-started.md) has the rest: running the three processes
-separately, skipping the approval code with a join token, and pointing a local UI at a
-deployed control plane.
-
 ## What you can run
 
 | Preset         | What you get                                                                  |
@@ -55,8 +51,6 @@ deployed control plane.
 A preset is one `preset.yaml` under `examples/ui/presets/`: it names an image and maps
 request fields onto that image's env. The images live in [`images/`](images/README.md) and
 are published to GHCR, so nothing has to be built to run any of the above.
-[Sandboxes](docs/sandboxes.md) covers presets, images and commands, host tags, previews and
-how a sandbox ends.
 
 Inside the `agent` image, a *harness* is a file too: one `.sh` per agent in
 [`images/agent/agents/`](images/agent/agents/README.md), discovered at start-up, so
@@ -138,18 +132,15 @@ with a warning in the log. Hosts re-enrol on their next hello; sandboxes are gon
 ## Deploying
 
 `nix build .#api` and `.#worker` produce the release binaries;
-`--system aarch64-linux` cross-compiles without a builder of that architecture.
-[Deploying](docs/deploy.md) covers the NixOS hosts and OpenTofu environments under
-`infra/`, worker enrollment, TLS, and getting preset images onto a remote worker.
+`--system aarch64-linux` cross-compiles without a builder of that architecture. The NixOS
+hosts and OpenTofu environments live under `infra/`.
 
 ## Where to read next
 
 | Page                                       | Read it when                                                   |
 | ------------------------------------------ | -------------------------------------------------------------- |
-| [Getting started](docs/getting-started.md) | You want the stack on your laptop                              |
-| [Sandboxes](docs/sandboxes.md)             | You want to know what a sandbox can run                        |
-| [Deploying](docs/deploy.md)                | You want a control plane and workers on AWS or Proxmox         |
-| [Repo config](docs/repo-config.md)         | You want a repo to declare its own sandbox (proposed)          |
+| [`VISION.md`](VISION.md)                   | You want to know what this is for and what it will never be    |
+| [`PLAN.md`](PLAN.md)                       | You want to know what is being built next                      |
+| [Images](images/README.md)                 | You want to build, pin or publish a sandbox image              |
 | [SDK](sdk/typescript/README.md)            | You are calling the API from TypeScript                        |
-| [`DESIGN.md`](DESIGN.md)                   | You want the contract and why each decision went the way it did |
 | [`AGENTS.md`](AGENTS.md)                   | You are changing the code                                      |
