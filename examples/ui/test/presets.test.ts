@@ -26,24 +26,33 @@ test('config: presets dir defaults to this app, image default is opt-in', () => 
   ).toMatchObject({ presetsDir: '/etc/sandboxd/presets', apiUrl: 'http://cp' })
 })
 
-test('shipped presets: one folder each, one image each', () => {
+test('shipped presets: one folder each; a built image ships its entry, a stock one a cmd', () => {
   expect(reg.names).toEqual([
     'coding-agent',
     'custom',
     'http',
     'jupyter',
     'node',
+    'notebook',
     'python',
     'ubuntu',
     'vscode',
   ])
-  expect(reg.list().map((p) => [p.name, p.image])).toEqual([
-    ['coding-agent', 'sandboxd-coding-agent:latest'],
-    ['custom', null],
-    ['jupyter', 'sandboxd-jupyter:latest'],
-    ['vscode', 'sandboxd-vscode:latest'],
+  expect(reg.list().map((p) => [p.name, p.image, p.cmd?.[0] ?? null])).toEqual([
+    ['coding-agent', 'sandboxd-coding-agent:latest', null],
+    ['custom', null, null],
+    ['http', 'python:3.12-slim', 'python3'],
+    ['jupyter', 'sandboxd-jupyter:latest', null],
+    ['node', 'node:22-slim', 'node'],
+    ['notebook', 'quay.io/jupyter/minimal-notebook:latest', 'jupyter'],
+    ['python', 'python:3.12-slim', 'python3'],
+    ['ubuntu', 'ubuntu:24.04', 'bash'],
+    ['vscode', 'sandboxd-vscode:latest', null],
   ])
-  for (const p of reg.list()) expect(p.cmd).toBeNull() // every image ships its entry at /usr/local/bin/sandboxd-entry
+  // A built image ships its entry at /usr/local/bin/sandboxd-entry, so it implies no cmd;
+  // a stock image has no entry of ours, so the preset must say what runs in the PTY.
+  for (const p of reg.list())
+    expect(p.cmd === null).toBe(p.image === null || p.image.startsWith('sandboxd-'))
 })
 
 test('coding-agent: fields expand to entry.sh env; secrets split out; absent fields emit nothing', () => {
@@ -137,7 +146,7 @@ test('registry: explicit name, claim by repo, fallback to custom, unknown -> 400
   expect(reg.resolve({ repo: ' ' }).name).toBe('custom')
   expect(reg.resolve({ image: 'python:3.12' }).name).toBe('custom')
   expect(() => reg.resolve({ preset: 'nope' })).toThrow(
-    /preset must be one of coding-agent, custom, jupyter, vscode/,
+    /preset must be one of coding-agent, custom, http, jupyter, node, notebook, python, ubuntu, vscode/,
   )
   expect(() => new PresetRegistry([preset('custom')], 'missing')).toThrow(/not registered/)
   expect(() => new PresetRegistry([preset('custom'), preset('custom')])).toThrow(

@@ -36,6 +36,7 @@ test('the presets are served here, and nothing outside /api is', async () => {
     'http',
     'jupyter',
     'node',
+    'notebook',
     'python',
     'ubuntu',
     'vscode',

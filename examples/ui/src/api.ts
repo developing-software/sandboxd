@@ -29,12 +29,7 @@ export function createApi(d: ApiDeps) {
     serviceToken: d.cfg.serviceToken,
     ...(d.fetch === undefined ? {} : { fetch: d.fetch }),
   })
-  // A rejected fetch is transport: the API is down or restarting. Name it, so the page
-  // says so instead of "internal error".
-  const down = (e: unknown) => {
-    log.warn('api unreachable', { url: d.cfg.apiUrl, err: String(e) })
-    return new Err.Http(502, `api unreachable at ${d.cfg.apiUrl}`)
-  }
+  const down = (e: unknown) => unreachable(d.cfg.apiUrl, e)
 
   return new Hono({ strict: false })
     .basePath('/api')
@@ -71,6 +66,13 @@ export function createApi(d: ApiDeps) {
       log.error('unhandled', { err: String(err), stack: err.stack })
       return c.json({ error: 'internal error' }, 500)
     })
+}
+
+/** A rejected fetch is transport: the API is down or restarting. Name it, so the page
+ *  says so instead of "internal error". */
+function unreachable(url: string, e: unknown) {
+  log.warn('api unreachable', { url, err: String(e) })
+  return new Err.Http(502, `api unreachable at ${url}`)
 }
 
 /** The API's answer, status and body untouched. */
