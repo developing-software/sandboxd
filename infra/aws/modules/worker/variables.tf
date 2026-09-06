@@ -33,13 +33,13 @@ variable "tailscale_host" {
 }
 
 variable "extra_settings" {
-  description = "Merged over the NixOS `settings` specialArg (sandboxd.host.*)."
+  description = "Merged over the NixOS `settings` specialArg (sandboxd.host.*); `worker` inside it is merged into worker.yaml."
   type        = any
   default     = {}
 }
 
 variable "env" {
-  description = "KEY=value pairs for /etc/sandboxd/worker.env: SANDBOXD_JOIN_TOKEN, registry credentials. The worker's own identity is self-generated on the host."
+  description = "KEY=value pairs for /etc/sandboxd/worker.env, what worker.yaml reads through $${VAR}: SANDBOXD_JOIN_TOKEN. Registry credentials too. The worker's own identity is self-generated on the host."
   type        = map(string)
   sensitive   = true
   default     = {}

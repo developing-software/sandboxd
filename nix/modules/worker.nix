@@ -1,14 +1,19 @@
 # services.sandboxd.worker — the per-host daemon. Enables Docker and runs the worker in
 # the docker group; its self-generated secret persists in the state directory, so the
-# control plane keeps recognising the host across reboots and upgrades.
+# control plane keeps recognising the host across reboots and upgrades. `settings` is
+# /etc/sandboxd/worker.yaml (internal/worker/config.go), rendered into the store, so the
+# join token is a `${SANDBOXD_JOIN_TOKEN}` reference and lives in environmentFile.
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
   cfg = config.services.sandboxd.worker;
   inherit (lib) mkOption types;
+  yaml = pkgs.formats.yaml { };
+  configFile = yaml.generate "worker.yaml" cfg.settings;
 in
 {
   options.services.sandboxd.worker = {
@@ -20,22 +25,22 @@ in
     url = mkOption {
       type = types.str;
       example = "wss://sandboxd.example.com";
-      description = "The control plane to dial (SANDBOXD_URL).";
+      description = "The control plane to dial (url).";
     };
     name = mkOption {
       type = types.nullOr types.str;
       default = null;
-      description = "Host name shown in the control plane (SANDBOXD_WORKER_NAME); null = hostname.";
+      description = "Host name shown in the control plane (name); null = hostname.";
     };
     maxSessions = mkOption {
       type = types.ints.positive;
       default = 4;
-      description = "Concurrent sandboxes on this host (SANDBOXD_WORKER_MAX_SESSIONS).";
+      description = "Concurrent sandboxes on this host (driver.docker.max_sandboxes).";
     };
     entry = mkOption {
       type = types.listOf types.str;
       default = [ "/usr/local/bin/sandboxd-entry" ];
-      description = "Command exec'd in the PTY inside every sandbox (SANDBOXD_WORKER_ENTRY).";
+      description = "Command exec'd in the PTY inside every sandbox (driver.docker.entry).";
     };
     tags = mkOption {
       type = types.listOf types.str;
@@ -45,10 +50,15 @@ in
         "region:eu"
       ];
       description = ''
-        Host tags a sandbox may require (SANDBOXD_WORKER_TAGS). Opaque strings compared by
-        set containment; `key:value` is a convention, not a schema. `arch:`, `os:` and
-        `driver:` are reported without being configured.
+        Host tags a sandbox may require (tags). Opaque strings compared by set
+        containment; `key:value` is a convention, not a schema. `arch:`, `os:`, `driver:`
+        and `provider:workers` are reported without being configured.
       '';
+    };
+    settings = mkOption {
+      type = types.submodule { freeformType = yaml.type; };
+      default = { };
+      description = "The whole of worker.yaml. The options above fill the obvious keys.";
     };
     extraEnv = mkOption {
       type = types.attrsOf types.str;
@@ -64,6 +74,19 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    services.sandboxd.worker.settings = {
+      url = lib.mkDefault cfg.url;
+      name = lib.mkIf (cfg.name != null) (lib.mkDefault cfg.name);
+      tags = lib.mkDefault cfg.tags;
+      join_token = lib.mkDefault "\${SANDBOXD_JOIN_TOKEN:-}";
+      identity = lib.mkDefault "/var/lib/sandboxd-worker/host.json";
+      driver.docker = {
+        sock = lib.mkDefault "/var/run/docker.sock";
+        entry = lib.mkDefault (builtins.toJSON cfg.entry);
+        max_sandboxes = lib.mkDefault cfg.maxSessions;
+      };
+    };
+
     virtualisation.docker.enable = true;
 
     systemd.services.sandboxd-worker = {
@@ -75,18 +98,9 @@ in
         "network-online.target"
         "docker.service"
       ];
-      environment = {
-        SANDBOXD_URL = cfg.url;
-        SANDBOXD_WORKER_MAX_SESSIONS = toString cfg.maxSessions;
-        SANDBOXD_WORKER_IDENTITY = "/var/lib/sandboxd-worker/host.json";
-        SANDBOXD_WORKER_ENTRY = builtins.toJSON cfg.entry;
-        DOCKER_SOCK = "/var/run/docker.sock";
-      }
-      // lib.optionalAttrs (cfg.tags != [ ]) { SANDBOXD_WORKER_TAGS = lib.concatStringsSep "," cfg.tags; }
-      // lib.optionalAttrs (cfg.name != null) { SANDBOXD_WORKER_NAME = cfg.name; }
-      // cfg.extraEnv;
+      environment = cfg.extraEnv;
       serviceConfig = {
-        ExecStart = lib.getExe cfg.package;
+        ExecStart = "${lib.getExe cfg.package} --config ${configFile}";
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         DynamicUser = true;
         SupplementaryGroups = [ "docker" ];

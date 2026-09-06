@@ -33,13 +33,13 @@ variable "tailscale_host" {
 }
 
 variable "extra_settings" {
-  description = "Merged over the NixOS `settings` specialArg (sandboxd.host.*)."
+  description = "Merged over the NixOS `settings` specialArg (sandboxd.host.*); `api` inside it is merged into api.yaml."
   type        = any
   default     = {}
 }
 
 variable "env" {
-  description = "KEY=value pairs for /etc/sandboxd/api.env: SANDBOXD_SERVICE_TOKEN, SANDBOXD_SECRET, SANDBOXD_LLM_*, SANDBOXD_SANDBOX_ENV_*."
+  description = "KEY=value pairs for /etc/sandboxd/api.env, the secrets api.yaml reads through $${VAR}: SANDBOXD_SERVICE_TOKEN, and whatever `extra_settings.api` references (SANDBOXD_SECRET, SANDBOXD_JOIN_TOKEN, SANDBOXD_LLM_*, SANDBOXD_SANDBOX_ENV_*)."
   type        = map(string)
   sensitive   = true
 }

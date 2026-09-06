@@ -10,5 +10,6 @@
     enable = true;
     url = "wss://${config.sandboxd.host.domain}";
     environmentFile = "/etc/sandboxd/worker.env";
+    settings = config.sandboxd.host.worker;
   };
 }

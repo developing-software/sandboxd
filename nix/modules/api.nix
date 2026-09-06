@@ -1,15 +1,18 @@
-# services.sandboxd.api — the control plane, driven through the legacy SANDBOXD_* variables
-# (no /etc/sandboxd/api.yaml yet; see PLAN.md). Every option is one variable from
-# internal/cp/config.go; secrets (SANDBOXD_SERVICE_TOKEN, SANDBOXD_SECRET, SANDBOXD_LLM_*,
-# SANDBOXD_SANDBOX_ENV_*) come from environmentFile and never touch the store.
+# services.sandboxd.api — the control plane. `settings` is /etc/sandboxd/api.yaml
+# (internal/cp/config.go), rendered into the store, so it must never hold a secret: the
+# module's defaults say `${SANDBOXD_SERVICE_TOKEN}` and the like, and environmentFile is
+# where those live. Providers: workers only; sandboxes run on hosts that dial in.
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
   cfg = config.services.sandboxd.api;
   inherit (lib) mkOption types;
+  yaml = pkgs.formats.yaml { };
+  configFile = yaml.generate "api.yaml" cfg.settings;
 in
 {
   options.services.sandboxd.api = {
@@ -26,12 +29,21 @@ in
     publicUrl = mkOption {
       type = types.str;
       example = "https://sandboxd.example.com";
-      description = "What browsers are told to connect to (SANDBOXD_PUBLIC_URL).";
+      description = "What browsers are told to connect to (public_url).";
     };
     previewDomain = mkOption {
       type = types.str;
       example = "preview.sandboxd.example.com";
-      description = "Preview proxy wildcard: <port>-<sid>.<previewDomain> (SANDBOXD_PREVIEW_DOMAIN).";
+      description = "Preview proxy wildcard: <port>-<sid>.<previewDomain> (preview_domain).";
+    };
+    settings = mkOption {
+      type = types.submodule { freeformType = yaml.type; };
+      default = { };
+      description = ''
+        The whole of api.yaml. The options above fill the obvious keys; anything else —
+        `sandbox_env`, `auth.secret` — goes here, as `''${VAR}` references when it is a
+        secret, never as the value.
+      '';
     };
     extraEnv = mkOption {
       type = types.attrsOf types.str;
@@ -42,10 +54,11 @@ in
       type = types.str;
       default = "/etc/sandboxd/api.env";
       description = ''
-        KEY=value file with SANDBOXD_SERVICE_TOKEN and optionally SANDBOXD_SECRET,
-        SANDBOXD_JOIN_TOKEN, SANDBOXD_LLM_BASE_URL, SANDBOXD_LLM_API_KEY,
-        SANDBOXD_SANDBOX_ENV_<NAME>.
-        The unit refuses to start without it rather than fall back to "dev-token".
+        KEY=value file with what the file reads through `''${VAR}`: SANDBOXD_SERVICE_TOKEN,
+        and optionally SANDBOXD_SECRET, SANDBOXD_JOIN_TOKEN and whatever `sandbox_env`
+        references. The unit refuses to start without it rather than fall back to "dev-token".
+        To see the effective configuration on the host:
+        `set -a; . /etc/sandboxd/api.env; set +a; sandboxd-api --config ${configFile} --check-config`.
       '';
     };
     openFirewall = mkOption {
@@ -56,6 +69,18 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    services.sandboxd.api.settings = {
+      listen = lib.mkDefault ":${toString cfg.port}";
+      public_url = lib.mkDefault cfg.publicUrl;
+      preview_domain = lib.mkDefault cfg.previewDomain;
+      db = lib.mkDefault "/var/lib/sandboxd-api/cp.db";
+      auth = {
+        service_token = lib.mkDefault "\${SANDBOXD_SERVICE_TOKEN}";
+        secret = lib.mkDefault "\${SANDBOXD_SECRET:-}";
+      };
+      providers.workers.join_token = lib.mkDefault "\${SANDBOXD_JOIN_TOKEN:-}";
+    };
+
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
 
     systemd.services.sandboxd-api = {
@@ -64,15 +89,9 @@ in
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
       unitConfig.AssertPathExists = cfg.environmentFile;
-      environment = {
-        SANDBOXD_PORT = toString cfg.port;
-        SANDBOXD_PUBLIC_URL = cfg.publicUrl;
-        SANDBOXD_PREVIEW_DOMAIN = cfg.previewDomain;
-        SANDBOXD_DB = "/var/lib/sandboxd-api/cp.db";
-      }
-      // cfg.extraEnv;
+      environment = cfg.extraEnv;
       serviceConfig = {
-        ExecStart = lib.getExe cfg.package;
+        ExecStart = "${lib.getExe cfg.package} --config ${configFile}";
         EnvironmentFile = cfg.environmentFile;
         DynamicUser = true;
         StateDirectory = "sandboxd-api";

@@ -13,6 +13,7 @@ in
     enable = true;
     publicUrl = "https://${host.domain}";
     previewDomain = host.previewDomain;
+    settings = host.api;
   };
   services.sandboxd.ingress = {
     enable = true;

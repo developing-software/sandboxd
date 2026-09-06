@@ -3,6 +3,8 @@ locals {
   flake = "../../../.."
   # The same join token on both ends: the worker enrols on first hello, no code to paste.
   join_env = var.join_token == null ? {} : { SANDBOXD_JOIN_TOKEN = var.join_token }
+  # The env file holds the secrets. api.yaml is rendered by the NixOS module into the
+  # store, so it must not hold one: `api_settings` says which value reads which variable.
   api_env = merge(
     { SANDBOXD_SERVICE_TOKEN = var.service_token },
     local.join_env,
@@ -10,6 +12,13 @@ locals {
     var.llm_api_key == null ? {} : { SANDBOXD_LLM_API_KEY = var.llm_api_key },
     { for k, v in var.sandbox_env : "SANDBOXD_SANDBOX_ENV_${k}" => v },
   )
+  api_settings = {
+    sandbox_env = merge(
+      var.llm_base_url == null ? {} : { LLM_BASE_URL = "$${SANDBOXD_LLM_BASE_URL}" },
+      var.llm_api_key == null ? {} : { LLM_API_KEY = "$${SANDBOXD_LLM_API_KEY}" },
+      { for k, v in var.sandbox_env : k => "$${SANDBOXD_SANDBOX_ENV_${k}}" },
+    )
+  }
 }
 
 module "api" {
@@ -27,6 +36,7 @@ module "api" {
   preview_domain        = var.preview_domain
   cloudflare_account_id = var.cloudflare_account_id
   cloudflare_zone_id    = var.cloudflare_zone_id
+  extra_settings        = { api = local.api_settings }
   env                   = local.api_env
 }
 

@@ -57,12 +57,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := cp.Load(path, os.Environ())
+	env := conf.NewEnv(os.Environ())
+	cfg, err := cp.Load(path, env)
 	if err != nil {
 		return err
 	}
 	if *check {
-		return checkConfig(path, cfg)
+		return checkConfig(path, cfg, env)
 	}
 
 	st, err := store.Open(cfg.DB, log)
@@ -178,12 +179,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return nil
 }
 
-// checkConfig is `--check-config`: the source used, what the file made the environment
-// irrelevant to, and the effective configuration with secrets redacted.
-func checkConfig(path string, cfg cp.Config) error {
+// checkConfig is `--check-config`: the source used, the variables the file never reads, and the effective configuration with secrets redacted.
+func checkConfig(path string, cfg cp.Config, env *conf.Env) error {
 	fmt.Println("# source:", source(path))
-	if ignored := conf.Ignored(os.Environ()); path != "" && len(ignored) > 0 {
-		fmt.Println("# ignored (a config file is in use; only ${VAR} reads the environment):", ignored)
+	if unread := env.Unread(); path != "" && len(unread) > 0 {
+		fmt.Println("# unread (set, but nothing in the file says ${VAR} for them):", unread)
 	}
 	return conf.Print(os.Stdout, cfg.Redacted())
 }

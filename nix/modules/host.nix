@@ -46,6 +46,19 @@ in
       example = "route53";
       description = "Lego DNS-01 provider for the wildcard cert; its credentials come from /etc/sandboxd/traefik.env.";
     };
+    api = mkOption {
+      type = types.attrs;
+      default = { };
+      description = ''
+        Merged into services.sandboxd.api.settings: the deploy's own keys of api.yaml,
+        such as `sandbox_env` as `${VAR}` references into the env file.
+      '';
+    };
+    worker = mkOption {
+      type = types.attrs;
+      default = { };
+      description = "Merged into services.sandboxd.worker.settings.";
+    };
     tailscale = {
       enable = mkOption {
         type = types.bool;

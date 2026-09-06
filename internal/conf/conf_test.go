@@ -169,9 +169,21 @@ func TestLocate(t *testing.T) {
 	}
 }
 
-func TestIgnored(t *testing.T) {
-	got := Ignored([]string{"SANDBOXD_PORT=1", "HOME=/", "SANDBOXD_CONFIG=/x", "SANDBOXD_DB=y"})
-	if !reflect.DeepEqual(got, []string{"SANDBOXD_DB", "SANDBOXD_PORT"}) {
-		t.Errorf("ignored = %v", got)
+func TestEnvRecordsWhatWasRead(t *testing.T) {
+	env := NewEnv([]string{"SANDBOXD_PORT=1", "HOME=/", "SANDBOXD_CONFIG=/x", "SANDBOXD_DB=y", "SANDBOXD_SERVICE_TOKEN=t"})
+	if v, ok := env.Lookup("SANDBOXD_SERVICE_TOKEN"); !ok || v != "t" {
+		t.Fatalf("lookup = %q, %v", v, ok)
+	}
+	if _, ok := env.Lookup("NOPE"); ok {
+		t.Fatal("unset must report unset")
+	}
+	// The token was read through ${VAR}; the port and db were not, and the config path
+	// is the loader's own.
+	if got := env.Unread(); !reflect.DeepEqual(got, []string{"SANDBOXD_DB", "SANDBOXD_PORT"}) {
+		t.Errorf("unread = %v", got)
+	}
+	env.Vars()
+	if got := env.Unread(); len(got) != 0 {
+		t.Errorf("after a full scan nothing is unread: %v", got)
 	}
 }

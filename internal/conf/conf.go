@@ -85,20 +85,6 @@ func Secret(key, value, file string) (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
-// Ignored lists the SANDBOXD_* variables in environ that a config file makes irrelevant:
-// with a file, the environment reaches the configuration only through `${VAR}`.
-func Ignored(environ []string) []string {
-	var out []string
-	for _, kv := range environ {
-		k, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(k, "SANDBOXD_") && k != EnvVar {
-			out = append(out, k)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 // Print renders v as YAML, for --check-config. The caller redacts first.
 func Print[T any](w io.Writer, v T) error {
 	b, err := yaml.Marshal(v)
@@ -319,4 +305,50 @@ func in(path string) string {
 		return ""
 	}
 	return " in " + path
+}
+
+// Env is the process environment as the loader reads it. Lookups are recorded, so
+// --check-config can name the SANDBOXD_* variables a file left unread — the ones an
+// operator set expecting the legacy behaviour.
+type Env struct {
+	vars map[string]string
+	used map[string]bool
+}
+
+func NewEnv(environ []string) *Env {
+	e := &Env{vars: make(map[string]string, len(environ)), used: map[string]bool{}}
+	for _, kv := range environ {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			e.vars[k] = v
+		}
+	}
+	return e
+}
+
+// Lookup is os.LookupEnv over the captured environment, recorded.
+func (e *Env) Lookup(k string) (string, bool) {
+	e.used[k] = true
+	v, ok := e.vars[k]
+	return v, ok
+}
+
+// Vars is every variable, for the legacy prefix scan. Reading them all counts as reading.
+func (e *Env) Vars() map[string]string {
+	for k := range e.vars {
+		e.used[k] = true
+	}
+	return e.vars
+}
+
+// Unread lists the SANDBOXD_* variables set but never looked up: with a file in use, a
+// value that reached nothing.
+func (e *Env) Unread() []string {
+	var out []string
+	for k := range e.vars {
+		if strings.HasPrefix(k, "SANDBOXD_") && k != EnvVar && !e.used[k] {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

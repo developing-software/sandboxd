@@ -100,19 +100,13 @@ type DockerProvider struct {
 // Load reads the file at path, or the legacy environment when path is empty, and
 // validates either. It takes the whole environment rather than a lookup because the
 // legacy SANDBOXD_SANDBOX_ENV_* is a prefix scan.
-func Load(path string, environ []string) (Config, error) {
-	env := map[string]string{}
-	for _, kv := range environ {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			env[k] = v
-		}
-	}
+func Load(path string, env *conf.Env) (Config, error) {
 	var cfg Config
 	var err error
 	if path == "" {
-		cfg, err = legacy(env)
+		cfg, err = legacy(env.Vars())
 	} else {
-		cfg, err = conf.Load[Config](path, func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+		cfg, err = conf.Load[Config](path, env.Lookup)
 	}
 	if err != nil {
 		return Config{}, err

@@ -42,12 +42,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := worker.Load(path, os.LookupEnv)
+	env := conf.NewEnv(os.Environ())
+	cfg, err := worker.Load(path, env.Lookup)
 	if err != nil {
 		return err
 	}
 	if *check {
-		return checkConfig(path, cfg)
+		return checkConfig(path, cfg, env)
 	}
 	if path == "" && os.Getenv("SANDBOXD_WORKER_CONFIG") != "" {
 		log.Warn("SANDBOXD_WORKER_CONFIG is now SANDBOXD_WORKER_IDENTITY; the old name still works this release")
@@ -100,12 +101,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return nil
 }
 
-// checkConfig is `--check-config`: the source used, what the file made the environment
-// irrelevant to, and the effective configuration with secrets redacted.
-func checkConfig(path string, cfg worker.Config) error {
+// checkConfig is `--check-config`: the source used, the variables the file never reads, and the effective configuration with secrets redacted.
+func checkConfig(path string, cfg worker.Config, env *conf.Env) error {
 	fmt.Println("# source:", source(path))
-	if ignored := conf.Ignored(os.Environ()); path != "" && len(ignored) > 0 {
-		fmt.Println("# ignored (a config file is in use; only ${VAR} reads the environment):", ignored)
+	if unread := env.Unread(); path != "" && len(unread) > 0 {
+		fmt.Println("# unread (set, but nothing in the file says ${VAR} for them):", unread)
 	}
 	return conf.Print(os.Stdout, cfg.Redacted())
 }

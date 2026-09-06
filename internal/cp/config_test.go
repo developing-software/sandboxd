@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"sandboxd/internal/conf"
 	"sandboxd/internal/sandbox/docker"
 )
 
@@ -42,7 +43,7 @@ providers:
     tags: [gpu]
     max_sandboxes: 2
 `)
-	cfg, err := Load(path, []string{"UNRELATED=x", "SANDBOXD_PORT=1"})
+	cfg, err := Load(path, conf.NewEnv([]string{"UNRELATED=x", "SANDBOXD_PORT=1"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ providers:
 func TestFileConfigProviders(t *testing.T) {
 	load := func(t *testing.T, providers string) Config {
 		t.Helper()
-		cfg, err := Load(writeFile(t, "api.yaml", "auth: {service_token: t}\n"+providers), nil)
+		cfg, err := Load(writeFile(t, "api.yaml", "auth: {service_token: t}\n"+providers), conf.NewEnv(nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,7 +116,7 @@ func TestFileConfigRejects(t *testing.T) {
 		"a bad provider tag":       "auth: {service_token: t}\nproviders: {docker: {tags: ['a b']}}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(writeFile(t, "api.yaml", body), nil); err == nil {
+			if _, err := Load(writeFile(t, "api.yaml", body), conf.NewEnv(nil)); err == nil {
 				t.Error("expected an error")
 			}
 		})
@@ -124,10 +125,10 @@ func TestFileConfigRejects(t *testing.T) {
 
 func TestLegacyEnvFailsClosedOnTheServiceToken(t *testing.T) {
 	// There is no default token: the published dev value is accepted only when asked for.
-	if _, err := Load("", nil); err == nil {
+	if _, err := Load("", conf.NewEnv(nil)); err == nil {
 		t.Fatal("a control plane with no service token must refuse to boot")
 	}
-	cfg, err := Load("", []string{"SANDBOXD_DEV=1"})
+	cfg, err := Load("", conf.NewEnv([]string{"SANDBOXD_DEV=1"}))
 	if err != nil {
 		t.Fatalf("dev mode still has to boot: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestLegacyEnvFailsClosedOnTheServiceToken(t *testing.T) {
 }
 
 func TestLegacyEnvDefaults(t *testing.T) {
-	cfg, err := Load("", []string{"SANDBOXD_SERVICE_TOKEN=t"})
+	cfg, err := Load("", conf.NewEnv([]string{"SANDBOXD_SERVICE_TOKEN=t"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestLegacyEnvDefaults(t *testing.T) {
 }
 
 func TestLegacyEnvIsReadUnchanged(t *testing.T) {
-	cfg, err := Load("", []string{
+	cfg, err := Load("", conf.NewEnv([]string{
 		"SANDBOXD_SERVICE_TOKEN=t",
 		"SANDBOXD_SECRET=signing",
 		"SANDBOXD_PORT=9000",
@@ -169,7 +170,7 @@ func TestLegacyEnvIsReadUnchanged(t *testing.T) {
 		"LLM_BASE_URL=http://llm/",
 		"SANDBOXD_LLM_API_KEY=k",
 		"UNRELATED=x",
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func TestLegacyEnvIsReadUnchanged(t *testing.T) {
 
 func TestLegacyEnvRejectsANonPort(t *testing.T) {
 	for _, port := range []string{"nope", "70000"} {
-		_, err := Load("", []string{"SANDBOXD_SERVICE_TOKEN=t", "SANDBOXD_PORT=" + port})
+		_, err := Load("", conf.NewEnv([]string{"SANDBOXD_SERVICE_TOKEN=t", "SANDBOXD_PORT=" + port}))
 		if err == nil || !strings.Contains(err.Error(), "port") {
 			t.Errorf("SANDBOXD_PORT=%s: err = %v, want a port error rather than a silent 8080", port, err)
 		}
