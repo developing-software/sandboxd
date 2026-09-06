@@ -10,7 +10,7 @@
 #   MODEL                     default: the agent file's agent_model_default
 #   SETUP                     shell command run in the clone before the agent (optional)
 #   LLM_BASE_URL LLM_API_KEY  one gateway tuple, mapped onto each harness by agents/_common.sh
-#   GIT_TOKEN GIT_USERNAME    for private repos / push
+#   GIT_TOKEN GIT_USERNAME    for private repos / push; GIT_TOKEN also authenticates gh
 #   SANDBOXD_AGENTS_DIR       where the agents live (default /opt/sandboxd/agents)
 #
 # Operators set defaults for any of these with SANDBOXD_SANDBOX_ENV_<NAME> on the control
@@ -30,6 +30,9 @@ export AGENT
 if [ -n "${GIT_TOKEN:-}" ]; then
   export GIT_ASKPASS=/usr/local/bin/sandboxd-git-askpass
   export GIT_TERMINAL_PROMPT=0
+  # gh reads no askpass helper, so GH_TOKEN is the only way the same credential
+  # reaches it — without this an agent can push a branch but not open its PR.
+  export GH_TOKEN="$GIT_TOKEN"
 fi
 git config --global user.name "${GIT_AUTHOR_NAME:-sandboxd}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-sandboxd@localhost}"
