@@ -21,9 +21,10 @@ Two halves, composed in `src/main.ts` by one `Bun.serve`:
 - **Pages**, `src/pages/`. One `.html` + `.ts` pair per concern, bundled by Bun from the
   html's own `<script>` and `<link>` tags: `hosts` (`/hosts`), `sandboxes`
   (`/sandboxes`), `new` (`/sandboxes/new`), `sandbox` (`/sandboxes/:id`, the terminal).
-  `/` redirects to the list. What they share: `shell.ts` (nav, owner id, polling),
-  `client.ts` (JSON over `/api`), `format.ts` (how a sandbox reads), `term.ts` (xterm.js
-  on the attach socket), `style.css`.
+  `/` redirects to the list. What they share: `shell.ts` (nav, owner id, polling, and
+  `openLink`, the one way a minted `Link` reaches a tab), `client.ts` (JSON over `/api`),
+  `format.ts` (how a sandbox reads), `term.ts` (xterm.js on the attach socket),
+  `style.css`.
 - **The API**, `src/api.ts` — Hono under `/api`, one generated call per route.
   `GET /api/presets` is the one route the control plane does not have, and
   `POST /api/sandboxes` the one with work of its own: it resolves a preset first. The
@@ -32,6 +33,10 @@ Two halves, composed in `src/main.ts` by one `Bun.serve`:
 And the rest:
 
 - `src/sandboxes.ts` — `buildCreate`: preset + fields → the API's `POST /sandboxes` body.
+- `src/preview.ts` — `Preview.detect`: presets + a sandbox → the port to offer. The other
+  direction of `buildCreate`: a preset's preview port is a field, a field is an env var,
+  so the sandbox the API hands back still names it and a page that did not create it can
+  still link it. A preset with a literal `preview: {port}` leaves no such trace.
 - `src/{errors,json,log}.ts` — the three helpers this app needs, kept here rather than
   shared: there is nothing left to share them with.
 - `src/presets/` — `preset.yaml` → `Preset`; the registry.

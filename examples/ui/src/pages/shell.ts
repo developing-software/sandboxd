@@ -1,6 +1,7 @@
-// What every page shares: the nav, the owner id, and a poll that stops with the tab hidden.
-// The owner id is the parent app's user; here it is whatever was typed, kept in
-// localStorage so it survives navigation between pages.
+// What every page shares: the nav, the owner id, a poll that stops with the tab hidden,
+// and the one way a minted Link is opened. The owner id is the parent app's user; here it
+// is whatever was typed, kept in localStorage so it survives navigation between pages.
+import type { Link } from '@sandboxd/sdk'
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.querySelector(`#${id}`) as T
@@ -41,6 +42,21 @@ export namespace Shell {
       msg === 'unauthorized'
         ? "unauthorized — the UI's SANDBOXD_SERVICE_TOKEN does not match the API's"
         : msg
+  }
+
+  /**
+   * Open a capability in a new tab. The tab is opened inside the click and navigated after
+   * the mint resolves: a `window.open` on the far side of an await has lost the user
+   * gesture, and every browser blocks it.
+   */
+  export const openLink = async (mint: () => Promise<Link>) => {
+    const tab = window.open('', '_blank')
+    const link = await mint().catch((err: Error) => {
+      tab?.close()
+      throw err
+    })
+    if (tab) return tab.location.replace(link.url)
+    window.open(link.url, '_blank')
   }
 
   /** Run `tick` now and every `ms` while the tab is visible. Returns a way to run it now. */
