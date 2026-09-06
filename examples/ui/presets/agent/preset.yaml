@@ -1,13 +1,19 @@
-# coding-agent: fresh clone on its own branch, then claude | codex | opencode | shell in the PTY.
-# Fields map 1:1 onto env consumed by entry.sh in this folder. Defaults for AGENT / MODEL / BRANCH
-# live in entry.sh so an operator can override them with SANDBOXD_SANDBOX_ENV_<NAME>.
-description: clone a repo and run claude, codex, opencode or a shell in it
+# agent: fresh clone on its own branch, then one coding agent in the PTY.
+# Data only. Every field maps 1:1 onto env that `images/agent/entry.sh` reads, and the
+# semantics — what an agent is, which one runs, what model it defaults to — belong to the
+# image, not to this file (DESIGN.md decisions 19 and 20).
+#
+# `agent.values` mirrors the files in `images/agent/agents/`; the two are asserted equal in
+# `test/presets.test.ts`. The list is here so the UI can offer a menu and a typo is a 400,
+# not so this app knows what an agent is: the image discovers its own.
+description: clone a repo and run a coding agent in it
+image: ghcr.io/developing-software/sandboxd-agent:latest
 claims_when: { present: repo }
 fields:
   repo:        { type: string, required: true, env: REPO, description: "https clone url" }
   prompt:      { type: string, env: PROMPT, multiline: true, description: "empty = shell only" }
   agent:       { type: enum, values: [claude, codex, opencode, shell], env: AGENT, description: "default claude; shell when prompt is empty" }
-  model:       { type: string, env: MODEL, description: "default claude-sonnet-4-6 (or SANDBOXD_SANDBOX_ENV_MODEL)" }
+  model:       { type: string, env: MODEL, description: "default: whatever the agent declares (sandboxd-agents lists them)" }
   setup:       { type: string, env: SETUP, description: "shell command run in the clone before the agent, e.g. bun install" }
   branch:      { type: string, env: BRANCH, description: "default sandboxd/<session id>" }
   base_branch: { type: string, env: BASE_BRANCH, description: "branch to clone; default = the repo default" }

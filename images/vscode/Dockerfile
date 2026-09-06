@@ -18,3 +18,9 @@ USER dev
 WORKDIR /workspace
 ENV TERM=xterm-256color
 CMD ["sleep", "infinity"]
+
+LABEL org.opencontainers.image.title="sandboxd-vscode" \
+      org.opencontainers.image.description="VS Code (code-server) on a repo, behind the sandboxd preview proxy." \
+      org.opencontainers.image.source="https://github.com/developing-software/sandboxd" \
+      org.opencontainers.image.documentation="https://github.com/developing-software/sandboxd/blob/main/images/README.md" \
+      org.opencontainers.image.licenses="MIT"

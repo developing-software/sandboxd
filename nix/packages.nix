@@ -1,6 +1,6 @@
 # Both daemons are one Go module at the repo root, and each cmd/ is one static binary.
 # CGO is off, so `nix build --system aarch64-linux` cross-compiles without binfmt or an
-# arm64 builder — which is the whole reason the port happened (PLAN.md).
+# arm64 builder — which is the whole reason the daemons are Go (DESIGN.md decision 16).
 { lib, buildGoModule }:
 let
   root = ../.;
