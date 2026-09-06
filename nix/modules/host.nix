@@ -51,7 +51,7 @@ in
       default = { };
       description = ''
         Merged into services.sandboxd.api.settings: the deploy's own keys of api.yaml,
-        such as `sandbox_env` as `${VAR}` references into the env file.
+        such as `sandbox_env` as `''${VAR}` references into the env file.
       '';
     };
     worker = mkOption {

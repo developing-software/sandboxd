@@ -39,3 +39,15 @@ graph through ogen, and its errors carry positions.
   and it reports a column where the decoder would not.
 - **A `provider` field in the API.** Tags select; `provider:workers` and `provider:local`
   are tags like any other.
+
+## Deploy
+
+The NixOS modules render `services.sandboxd.{api,worker}.settings` with
+`pkgs.formats.yaml` and start the daemon with `--config` on the result. The file lands in
+the store, so it must never hold a secret: the module's defaults are `${SANDBOXD_SERVICE_TOKEN}`,
+`${SANDBOXD_JOIN_TOKEN:-}` and the like, and `environmentFile` is where those live —
+unchanged in content from before, which is what let the migration touch no deployed secret.
+The OpenTofu envs pass their `sandbox_env` keys as `${SANDBOXD_SANDBOX_ENV_<K>}` references
+through `extra_settings.api`, and the values through the env file as before. A deployed
+control plane enables the `workers` provider only. `--check-config` lists the `SANDBOXD_*`
+variables a file never read, so a stale env entry is visible rather than silently ignored.

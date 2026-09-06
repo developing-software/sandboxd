@@ -173,7 +173,11 @@ with a warning in the log. Hosts re-enrol on their next hello; sandboxes are gon
 
 `nix build .#api` and `.#worker` produce the release binaries;
 `--system aarch64-linux` cross-compiles without a builder of that architecture. The NixOS
-hosts and OpenTofu environments live under `infra/`.
+hosts and OpenTofu environments live under `infra/`. The NixOS modules render
+`services.sandboxd.{api,worker}.settings` into the daemon's YAML file — into the store, so
+it holds `${VAR}` references and never a secret — and the OpenTofu envs upload the env file
+those references read (`/etc/sandboxd/{api,worker}.env`). A deployed control plane runs the
+`workers` provider only: sandboxes live on the hosts that dial in.
 
 ## Where to read next
 

@@ -14,16 +14,6 @@ and `providers.docker` (ADR 30). Two words, used precisely from here on:
   (`workers`), or inside the control plane (`providers.<driver>`, which is `cp/local` over
   that driver; no new provider package per driver).
 
-## Left over from the config file
-
-The NixOS modules and the OpenTofu environments under `infra/` still drive both daemons
-through the legacy `SANDBOXD_*` variables, which keep working with no file present. Moving
-them to write `/etc/sandboxd/{api,worker}.yaml` — the `services.sandboxd.*` options
-becoming a `settings` attrset rendered with `pkgs.formats.yaml`, the env files shrinking to
-the secrets `${VAR}` reads — is deploy work with no code behind it, and needs a host to
-try it on. Until then `--check-config` on a deployed host says `environment (no config
-file found)`.
-
 ## The Kubernetes driver (phase 4)
 
 The one runtime where the API server already proxies both halves of the contract:
