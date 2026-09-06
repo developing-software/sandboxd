@@ -35,7 +35,7 @@ And the rest:
 - `src/{errors,json,log}.ts` — the three helpers this app needs, kept here rather than
   shared: there is nothing left to share them with.
 - `src/presets/` — `preset.yaml` → `Preset`; the registry.
-- `presets/` — the data, and `build.ts` (`bun run image`).
+- `presets/` — the data. One `preset.yaml` each, nothing else: this app builds no images.
 
 ## Rules
 
@@ -58,9 +58,14 @@ And the rest:
 - **Validation of what the API owns stays in the API.** This app checks what only it can
   know: preset fields. Image, command, env and tags go through untouched.
 - **Presets are data.** Nothing preset-specific belongs in TypeScript. A malformed
-  `preset.yaml` is a boot error naming the file. A preset on a stock image (`ubuntu`,
-  `python`, `node`, `http`, `notebook`) is a `preset.yaml` alone: `image:` names it, `cmd:` runs in
-  the PTY, and `bun run image` skips the folder.
+  `preset.yaml` is a boot error naming the file. A preset is that file and nothing else —
+  `image:` names an existing image (required; `null` means the caller's), `cmd:` says what
+  runs in the PTY unless the image ships its own entry. This app builds no images: the
+  official ones are `images/` at the repo root, published to GHCR, and a preset is a client
+  of a tag exactly as an external app would be. `test/images.test.ts` is the only thing
+  that reaches across: the tag a preset names must be one CI publishes, and the `agent`
+  enum must still match `images/agent/agents/` — the image owns what an agent is, and the
+  yaml repeats the list only so the UI has a menu.
 - The pages talk to this app on the same origin, no bearer token. The owner id is whatever
   is typed in the nav, kept in localStorage, and sent as `X-Sandboxd-Owner`.
 
@@ -89,16 +94,15 @@ The formatter owns layout — no semicolons, single quotes, width 95. Never hand
 
 From this directory: `bun install` once, then
 
-| Command             | What                                          |
-| ------------------- | --------------------------------------------- |
-| `bun run dev`       | The UI on :8081, talking to the local API     |
-| `bun run image`     | One Docker image per preset with a Dockerfile |
-| `bun run generate`  | `src/admin/` from `../../api/admin.yaml`      |
-| `bun test`          |                                               |
-| `bun run typecheck` |                                               |
-| `bun run fmt`       | `oxfmt`, not Prettier                         |
-| `bun run lint`      | `oxlint`, not ESLint                          |
-| `bun run fallow`    | Dead code and duplication                     |
+| Command             | What                                      |
+| ------------------- | ----------------------------------------- |
+| `bun run dev`       | The UI on :8081, talking to the local API |
+| `bun run generate`  | `src/admin/` from `../../api/admin.yaml`  |
+| `bun test`          |                                           |
+| `bun run typecheck` |                                           |
+| `bun run fmt`       | `oxfmt`, not Prettier                     |
+| `bun run lint`      | `oxlint`, not ESLint                      |
+| `bun run fallow`    | Dead code and duplication                 |
 
 Before handing work back: `bun run fmt && bun run lint && bun run typecheck && bun test`.
 `bun run fallow` reports inherited warnings; do not add to them.

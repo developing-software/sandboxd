@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test'
-import { existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { loadConfig } from '../src/config'
 import {
@@ -14,15 +13,6 @@ const loaded = loadPresetDir(resolve(import.meta.dir, '../presets'))
 const reg = new PresetRegistry(loaded.presets)
 const preset = (name: string): Preset => reg.get(name)!
 
-// This app builds nothing: an image either comes from images/ (published, ships its own
-// entry) or from somewhere else entirely. `ours` names the folder, or undefined.
-const IMAGES = resolve(import.meta.dir, '../../../images')
-const REGISTRY = 'ghcr.io/developing-software'
-const ours = (image: string | null) =>
-  image?.startsWith(`${REGISTRY}/sandboxd-`)
-    ? image.slice(`${REGISTRY}/sandboxd-`.length).split(':')[0]
-    : undefined
-
 test('config: presets dir defaults to this app, image default is opt-in', () => {
   const cfg = loadConfig({ SANDBOXD_SERVICE_TOKEN: 't' })
   expect(cfg.presetsDir).toBe(resolve(import.meta.dir, '../presets'))
@@ -36,18 +26,9 @@ test('config: presets dir defaults to this app, image default is opt-in', () => 
   ).toMatchObject({ presetsDir: '/etc/sandboxd/presets', apiUrl: 'http://cp' })
 })
 
-test('shipped presets: one folder each; a built image ships its entry, a stock one a cmd', () => {
-  expect(reg.names).toEqual([
-    'agent',
-    'custom',
-    'http',
-    'jupyter',
-    'node',
-    'notebook',
-    'python',
-    'ubuntu',
-    'vscode',
-  ])
+// What every preset resolves to. The image-side half of this — that ours are published on
+// the tag named here, and that only ours may omit a cmd — is in images.test.ts.
+test('shipped presets: one folder each, and what each one implies', () => {
   expect(reg.list().map((p) => [p.name, p.image, p.cmd?.[0] ?? null])).toEqual([
     ['agent', 'ghcr.io/developing-software/sandboxd-agent:latest', null],
     ['custom', null, null],
@@ -59,31 +40,6 @@ test('shipped presets: one folder each; a built image ships its entry, a stock o
     ['ubuntu', 'ubuntu:24.04', 'bash'],
     ['vscode', 'ghcr.io/developing-software/sandboxd-vscode:latest', null],
   ])
-  // One of ours ships its entry at /usr/local/bin/sandboxd-entry, so it implies no cmd;
-  // a stock image has no entry of ours, so the preset must say what runs in the PTY.
-  for (const p of reg.list())
-    expect(p.cmd === null).toBe(p.image === null || ours(p.image) !== undefined)
-})
-
-test('presets over ours name an image this repo publishes, on the tag it publishes', () => {
-  for (const p of reg.list()) {
-    const name = ours(p.image)
-    if (name === undefined) continue
-    expect(p.image).toBe(`${REGISTRY}/sandboxd-${name}:latest`)
-    expect(existsSync(resolve(IMAGES, name, 'Dockerfile'))).toBe(true)
-  }
-})
-
-// The image discovers its own agents from that folder; this preset repeats the list so a UI
-// can offer a menu and a typo is a 400. Nothing else may know an agent's name — see
-// images/agent/agents/README.md.
-test('agent preset: the enum mirrors images/agent/agents/, file for file', () => {
-  const files = readdirSync(resolve(IMAGES, 'agent/agents'))
-    .filter((f) => f.endsWith('.sh') && !f.startsWith('_'))
-    .map((f) => f.replace(/\.sh$/, ''))
-    .toSorted()
-  const field = preset('agent').info.fields.find((f) => f.name === 'agent')!
-  expect(field.values!.toSorted()).toEqual(files)
 })
 
 test('agent: fields expand to entry.sh env; secrets split out; absent fields emit nothing', () => {
