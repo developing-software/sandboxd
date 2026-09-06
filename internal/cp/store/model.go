@@ -2,7 +2,7 @@
 // leaf of the cp tree — everything else imports these structs, and only this package
 // imports a SQL driver.
 //
-// Rows are disposable by design (SPEC.md, "Storage"): sandboxes are ephemeral and hosts
+// Rows are disposable by design (DESIGN.md, "Storage"): sandboxes are ephemeral and hosts
 // re-enroll, so a database at another schema version is dropped rather than migrated.
 package store
 
@@ -45,7 +45,7 @@ type Host struct {
 // Sandbox is a row as the rest of the CP sees it: JSON columns already decoded.
 //
 // Secrets are absent on purpose. `secret_env` reaches the scheduler's memory and the
-// worker, and never a column here (SPEC.md, "Sandbox").
+// worker, and never a column here (DESIGN.md decision 7).
 type Sandbox struct {
 	ID      string
 	OwnerID string

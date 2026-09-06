@@ -7,13 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
 
 	"github.com/coder/websocket"
 
-	"sandboxd/internal/cp/hosts"
 	"sandboxd/internal/cp/store"
 	"sandboxd/internal/wire"
 )
@@ -23,24 +23,53 @@ import (
 // when the browser reattaches, which is what makes dropping safe here.
 const viewerQueue = 256
 
-// What the bridge needs. The opener returns the concrete stream because a PTY is a
-// stream with a Resize, and there is nothing else it could be.
+// PTY is what the bridge needs of a terminal: bytes both ways, a close, and a resize. The
+// hub's tunnel stream is one; the interface is declared here so this package depends on
+// the wire and the store and never on the tunnel, and so the bridge can be tested against
+// a pipe.
+type PTY interface {
+	io.ReadWriteCloser
+	Resize(size wire.Size) error
+}
+
+// What the bridge needs from the rest of the control plane.
 type (
 	sandboxes interface {
 		Sandbox(sid string) (store.Sandbox, bool, error)
 	}
-	opener interface {
-		OpenPTY(hostID, sid string, size wire.Size) (*hosts.Stream, error)
+	// Opener attaches a viewer to a running sandbox's terminal on its host.
+	Opener interface {
+		OpenPTY(hostID, sid string, size wire.Size) (PTY, error)
 	}
 )
 
+// Open adapts a function that returns any concrete PTY — the hub's `OpenPTY` returns its
+// own stream type — so the producer keeps exporting a struct and this package never names
+// it. The nil check is the point of doing it here once: a nil pointer returned through an
+// interface is not a nil interface.
+func Open[P PTY](open func(hostID, sid string, size wire.Size) (P, error)) Opener {
+	return openFunc(func(hostID, sid string, size wire.Size) (PTY, error) {
+		p, err := open(hostID, sid, size)
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
+	})
+}
+
+type openFunc func(hostID, sid string, size wire.Size) (PTY, error)
+
+func (f openFunc) OpenPTY(hostID, sid string, size wire.Size) (PTY, error) {
+	return f(hostID, sid, size)
+}
+
 type Bridge struct {
 	store sandboxes
-	hub   opener
+	hub   Opener
 	log   *slog.Logger
 }
 
-func NewBridge(s sandboxes, hub opener, log *slog.Logger) *Bridge {
+func NewBridge(s sandboxes, hub Opener, log *slog.Logger) *Bridge {
 	return &Bridge{store: s, hub: hub, log: log}
 }
 
@@ -77,10 +106,8 @@ func (b *Bridge) Serve(w http.ResponseWriter, r *http.Request, sid string, size 
 	}
 	done := make(chan struct{})
 	go func() { defer close(done); v.write(ctx) }()
-	// Told to go, then waited for. The request context is still live while this handler
-	// returns, so the writer has to be woken by something; closing the PTY below happens
-	// to do it, through the reader goroutine, but only because of the order these defers
-	// run in. Saying it directly costs a channel and removes that argument.
+	// Told to go, then waited for: the request context is still live while this handler
+	// returns, so nothing else would wake the writer.
 	defer func() { v.shutdown(); <-done }()
 
 	pty, err := b.open(sid, size)
@@ -131,7 +158,7 @@ func (b *Bridge) Serve(w http.ResponseWriter, r *http.Request, sid string, size 
 }
 
 // open finds the sandbox and attaches to its host, or says why it could not.
-func (b *Bridge) open(sid string, size wire.Size) (*hosts.Stream, error) {
+func (b *Bridge) open(sid string, size wire.Size) (PTY, error) {
 	sb, found, err := b.store.Sandbox(sid)
 	if err != nil {
 		return nil, errors.New("sandbox lookup failed")
@@ -163,18 +190,31 @@ func (v *viewer) write(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-v.stop:
+			// A reason queued just before the stop must still go out: `close` then
+			// `shutdown` is the normal order when opening fails, and with both channels
+			// ready a select picks at random — this is the test that flaked without it.
+			select {
+			case reason := <-v.reason:
+				v.farewell(ctx, reason)
+			default:
+			}
 			return
 		case reason := <-v.reason:
-			msg, err := json.Marshal(serverMsg{Type: "closed", Reason: reason})
-			if err == nil {
-				_ = v.ws.Write(ctx, websocket.MessageText, msg)
-			}
+			v.farewell(ctx, reason)
 			return
 		case b := <-v.out:
 			if err := v.ws.Write(ctx, websocket.MessageBinary, b); err != nil {
 				return
 			}
 		}
+	}
+}
+
+// farewell is the last frame: why the terminal is going away.
+func (v *viewer) farewell(ctx context.Context, reason string) {
+	msg, err := json.Marshal(serverMsg{Type: "closed", Reason: reason})
+	if err == nil {
+		_ = v.ws.Write(ctx, websocket.MessageText, msg)
 	}
 }
 

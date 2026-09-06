@@ -81,33 +81,6 @@ type (
 	}
 )
 
-// Candidate is an approved, online host with room and the right tags.
-type Candidate struct {
-	HostID string
-	Free   int
-}
-
-// Policy chooses among candidates, or returns "" to queue.
-type Policy interface {
-	Pick(candidates []Candidate) string
-}
-
-type mostFreeSlots struct{}
-
-// MostFreeSlots is DESIGN.md decision 8: the host with the most free slots wins.
-var MostFreeSlots Policy = mostFreeSlots{}
-
-func (mostFreeSlots) Pick(candidates []Candidate) string {
-	best := ""
-	free := 0
-	for _, c := range candidates {
-		if best == "" || c.Free > free {
-			best, free = c.HostID, c.Free
-		}
-	}
-	return best
-}
-
 type Scheduler struct {
 	store      schedStore
 	hub        placement
@@ -123,13 +96,14 @@ type Scheduler struct {
 }
 
 // NewScheduler wires the loop. sandboxEnv is operator-level env merged under every
-// sandbox at placement time and never persisted.
+// sandbox at placement time and never persisted; policy ranks the hosts that could take a
+// sandbox (policy.go), and MostFreeSlots is the one v1 ships.
 func NewScheduler(
-	s schedStore, hub placement, sandboxEnv map[string]string,
+	s schedStore, hub placement, policy Policy, sandboxEnv map[string]string,
 	events chan Event, log *slog.Logger,
 ) *Scheduler {
 	return &Scheduler{
-		store: s, hub: hub, sandboxEnv: sandboxEnv, policy: MostFreeSlots, log: log,
+		store: s, hub: hub, policy: policy, sandboxEnv: sandboxEnv, log: log,
 		events:  events,
 		secrets: map[string]map[string]string{},
 	}
@@ -267,10 +241,10 @@ func (s *Scheduler) handle(e Event) {
 	}
 }
 
-// hostOnline reconciles in both directions. The store's side is what the TypeScript
-// control plane did; the host's side is the fix for the orphan it could never reclaim
-// (PLAN.md, "Bugs to fix in the port, not carry"): placement sends sandbox.create before
-// it marks the row, so a crash in that window leaves a container nobody owns.
+// hostOnline reconciles in both directions: rows the host no longer runs are ended, and
+// containers the store has no row for are reclaimed. The second direction exists because
+// placement sends sandbox.create before it marks the row, so a crash in that window
+// leaves a container nobody owns.
 func (s *Scheduler) hostOnline(hostID string, running []string) error {
 	reported := make(map[string]struct{}, len(running))
 	for _, sid := range running {
@@ -404,7 +378,7 @@ func (s *Scheduler) reapUnknown() {
 }
 
 // HasTags reports whether a host's set contains every tag a sandbox requires. Set
-// containment is the whole rule — no operators, no wildcards (SPEC.md, "Tags").
+// containment is the whole rule — no operators, no wildcards (DESIGN.md decision 8).
 func HasTags(host, required []string) bool {
 	if len(required) == 0 {
 		return true

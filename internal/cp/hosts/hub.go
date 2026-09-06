@@ -25,8 +25,8 @@ type Hub struct {
 	store     enrollStore
 	joinToken string
 	// events carries what the scheduler reacts to. It is a constructor argument rather
-	// than a subscription, which is what removes the hub-and-scheduler wiring cycle the
-	// TypeScript control plane broke with a post-construction `hub.on(sched)`.
+	// than a subscription, so there is no hub-and-scheduler construction cycle to break
+	// after the fact: neither knows the other's type.
 	events chan<- cp.Event
 	log    *slog.Logger
 

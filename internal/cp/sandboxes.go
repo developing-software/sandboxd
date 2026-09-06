@@ -108,8 +108,7 @@ func (s *Sandboxes) List(ownerID string) ([]clientapi.SandboxView, error) {
 	if err != nil {
 		return nil, err
 	}
-	// One queue snapshot for the whole response. The TypeScript control plane rescanned
-	// the queued table once per queued row (PLAN.md, "Bugs to fix in the port, not carry").
+	// One queue snapshot for the whole response, not one scan per queued row.
 	queue, err := s.queue()
 	if err != nil {
 		return nil, err
@@ -190,7 +189,7 @@ func (s *Sandboxes) Sandbox(sid string) (store.Sandbox, bool, error) {
 }
 
 // owned is the ownership check. A sandbox belonging to another owner is indistinguishable
-// from a missing one (SPEC.md, "Auth"). The empty check is not the transport's job done
+// from a missing one (DESIGN.md, "Trust"). The empty check is not the transport's job done
 // twice: a use case that trusts a header for ownership is one route away from a bug.
 func (s *Sandboxes) owned(sid, ownerID string) (store.Sandbox, error) {
 	if ownerID == "" {

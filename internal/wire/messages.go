@@ -3,8 +3,9 @@
 // id formats. It is a leaf — it imports nothing of ours and nothing outside the standard
 // library, and `depguard` keeps it that way.
 //
-// The message table in SPEC.md is the contract; this file is its transcription. A field
-// added here must be optional, or both daemons ship together — they deploy separately.
+// This file is the contract: the message table lives here and in the fixtures beside it,
+// nowhere else. A field added here must be optional, or both daemons ship together — they
+// deploy separately.
 package wire
 
 import (

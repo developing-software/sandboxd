@@ -119,7 +119,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request, t Target) {
 		return
 	}
 	// A sandbox that is not running is a 502, not a 404: the URL is valid, the sandbox is
-	// not there (SPEC.md, "Browser surfaces").
+	// not there (DESIGN.md decision 11).
 	if !found || sb.Status != store.Running || sb.HostID == nil {
 		http.Error(w, "sandbox is not running", http.StatusBadGateway)
 		return

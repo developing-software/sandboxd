@@ -69,8 +69,8 @@ func (s *SQLite) init(log *slog.Logger, path string) error {
 		return fmt.Errorf("store: schema check: %w", err)
 	}
 	// Every row is disposable, so an old schema is dropped rather than refused: a unit
-	// under Restart=always must not crash-loop on a version bump. `sessions` is the name
-	// a TypeScript control plane left behind.
+	// under Restart=always must not crash-loop on a version bump. `sessions` is the
+	// table's name before decision 5 renamed it, still dropped so an old file is cleaned.
 	if tables > 0 && version != schemaVersion {
 		log.Warn("schema version changed; dropping all state",
 			"path", path, "found", version, "expected", schemaVersion)
@@ -379,7 +379,7 @@ func scanSandbox(r scanner) (Sandbox, error) {
 }
 
 // Dump renders a whole table as text. It exists for the one assertion that cannot be made
-// any other way — that no secret has ever reached a column (SPEC.md, "Sandbox") — and it
+// any other way — that no secret has ever reached a column (DESIGN.md decision 7) — and it
 // takes a fixed set of table names rather than a query, because the name is interpolated
 // into the SQL and it must not grow into a query API.
 func (s *SQLite) Dump(table string) (string, error) {

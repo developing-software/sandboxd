@@ -11,8 +11,8 @@ import (
 	"github.com/ogen-go/ogen/ogenerrors"
 	"github.com/ogen-go/ogen/validate"
 
-	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
+	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/gen/clientapi"
 )
 
@@ -69,8 +69,8 @@ func problem(log *slog.Logger, err error) fault {
 		return fault{status: http.StatusUnauthorized, message: errBadToken.Error()}
 	}
 
-	// The body did not validate. ogen reports every failing field at once, in a struct —
-	// this is what replaced recovering a field name from huma's prose with a regex.
+	// The body did not validate. ogen reports every failing field at once, in a struct, so
+	// the caller sees all of them in one round trip.
 	var invalid *validate.Error
 	if errors.As(err, &invalid) {
 		issues := make([]flaw, 0, len(invalid.Fields))

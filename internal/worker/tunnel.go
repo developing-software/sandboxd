@@ -24,17 +24,11 @@ const (
 	maxBackoff        = 30 * time.Second
 	// One frame carries a whole PTY replay, so the limit is well above the ring.
 	readLimit = 4 << 20
-	// Frames waiting on the one writer goroutine. Port copiers and viewer pumps block
-	// here; that is the backpressure, and it reaches the container's socket.
-	writeQueue = 256
-	// Bytes waiting to go into one proxied connection. Past this the tunnel's reader
-	// blocks, which is what makes the stream an honest net.Conn end to end.
-	portQueue = 32
-	portRead  = 32 << 10
 )
 
 // Tunnel is the one outbound WebSocket to the control plane: JSON control messages as
 // text frames, PTY bytes and proxied TCP as binary ones, all multiplexed by stream id.
+// The connection-scoped state is a `session`; a `portStream` is one proxied connection.
 type Tunnel struct {
 	cfg    Config
 	mgr    *Manager
@@ -44,45 +38,6 @@ type Tunnel struct {
 
 	mu  sync.Mutex
 	cur *session
-}
-
-// session is everything that dies with one connection. A reconnect builds a new one:
-// stream ids are only unique within a connection, so none of this survives.
-type session struct {
-	conn *websocket.Conn
-	out  chan frame
-	done chan struct{}
-	once sync.Once
-
-	mu      sync.Mutex
-	streams map[uint32]*stream
-}
-
-type frame struct {
-	typ  websocket.MessageType
-	data []byte
-	// ack, when set, is closed once this frame has reached the socket. Flush uses it to
-	// know a shutdown's last messages actually went out.
-	ack chan struct{}
-}
-
-// stream is one multiplexed channel: exactly one of the two halves is set. The sid lives
-// here because the wire names a stream, not a sandbox — only the tunnel knows which is
-// which.
-type stream struct {
-	sid    string
-	viewer *Viewer
-	port   *portStream
-}
-
-type portStream struct {
-	in     chan []byte
-	done   chan struct{}
-	cancel context.CancelFunc
-	once   sync.Once
-
-	mu   sync.Mutex
-	conn net.Conn
 }
 
 func NewTunnel(cfg Config, mgr *Manager, dialer Dialer, events <-chan Event, log *slog.Logger) *Tunnel {
@@ -136,17 +91,13 @@ func (t *Tunnel) Flush(ctx context.Context) {
 	}
 }
 
+// serve runs one connection: hello, then the read loop until the socket dies.
 func (t *Tunnel) serve(ctx context.Context, conn *websocket.Conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	conn.SetReadLimit(readLimit)
-	s := &session{
-		conn:    conn,
-		out:     make(chan frame, writeQueue),
-		done:    make(chan struct{}),
-		streams: map[uint32]*stream{},
-	}
+	s := newSession(conn)
 	t.setCurrent(s)
 	defer func() {
 		t.setCurrent(nil)
@@ -206,6 +157,8 @@ func (t *Tunnel) write(ctx context.Context, s *session) {
 		}
 	}
 }
+
+// --- inbound ---------------------------------------------------------------------------
 
 func (t *Tunnel) control(ctx context.Context, s *session, raw []byte) {
 	msg, err := wire.ParseFromCP(raw)
@@ -275,6 +228,8 @@ func (t *Tunnel) binary(s *session, data []byte) {
 	}
 }
 
+// --- PTY streams -----------------------------------------------------------------------
+
 func (t *Tunnel) openPTY(s *session, m *wire.PtyOpen) {
 	v, replay, err := t.mgr.Attach(m.SID, m.Size)
 	if err != nil {
@@ -303,13 +258,11 @@ func (t *Tunnel) pumpViewer(s *session, id uint32, v *Viewer) {
 	}
 }
 
+// --- port streams ----------------------------------------------------------------------
+
 func (t *Tunnel) openPort(ctx context.Context, s *session, m *wire.PortDial) {
 	ctx, cancel := context.WithCancel(ctx)
-	ps := &portStream{
-		in:     make(chan []byte, portQueue),
-		done:   make(chan struct{}),
-		cancel: cancel,
-	}
+	ps := newPortStream(cancel)
 	// Registered before the dial, so a `port.close` that overtakes it still lands.
 	s.add(m.Stream, &stream{sid: m.SID, port: ps})
 
@@ -358,6 +311,8 @@ func (t *Tunnel) pumpPort(s *session, id uint32, ps *portStream, conn net.Conn) 
 	}
 	ps.close()
 }
+
+// --- host → cp -------------------------------------------------------------------------
 
 func (t *Tunnel) heartbeat(ctx context.Context, s *session) {
 	tick := time.NewTicker(heartbeatInterval)
@@ -409,13 +364,9 @@ func (t *Tunnel) sendBinary(s *session, id uint32, payload []byte) {
 	s.queue(frame{typ: websocket.MessageBinary, data: wire.Encode(id, payload)})
 }
 
+// teardown ends every stream because the connection is gone.
 func (t *Tunnel) teardown(s *session) {
-	s.mu.Lock()
-	streams := s.streams
-	s.streams = map[uint32]*stream{}
-	s.mu.Unlock()
-
-	for _, st := range streams {
+	for _, st := range s.takeAll() {
 		if st.viewer != nil {
 			st.viewer.Close()
 		}
@@ -435,90 +386,6 @@ func (t *Tunnel) setCurrent(s *session) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.cur = s
-}
-
-func (s *session) queue(f frame) {
-	select {
-	case s.out <- f:
-	case <-s.done:
-	}
-}
-
-func (s *session) add(id uint32, st *stream) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.streams[id] = st
-}
-
-func (s *session) stream(id uint32) *stream {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.streams[id]
-}
-
-// take removes a stream and returns it, so exactly one caller ever cleans one up.
-func (s *session) take(id uint32) *stream {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st := s.streams[id]
-	delete(s.streams, id)
-	return st
-}
-
-func (s *session) close() {
-	s.once.Do(func() { close(s.done) })
-}
-
-func (p *portStream) attach(conn net.Conn) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	select {
-	case <-p.done:
-		return false
-	default:
-	}
-	p.conn = conn
-	return true
-}
-
-// write blocks the tunnel's reader once this stream's queue is full — the decided policy
-// for proxied TCP, and the opposite of a PTY viewer's.
-func (p *portStream) write(b []byte) {
-	select {
-	case p.in <- b:
-	case <-p.done:
-	}
-}
-
-func (p *portStream) feed() {
-	for {
-		select {
-		case b := <-p.in:
-			p.mu.Lock()
-			conn := p.conn
-			p.mu.Unlock()
-			if conn == nil {
-				return
-			}
-			if _, err := conn.Write(b); err != nil {
-				return
-			}
-		case <-p.done:
-			return
-		}
-	}
-}
-
-func (p *portStream) close() {
-	p.once.Do(func() {
-		close(p.done)
-		p.cancel()
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if p.conn != nil {
-			_ = p.conn.Close()
-		}
-	})
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {

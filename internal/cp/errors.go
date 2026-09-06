@@ -13,7 +13,7 @@ import (
 	"fmt"
 )
 
-// The failure kinds a use case can report. Only `cp/http` turns one into a status code —
+// The failure kinds a use case can report. Only `cp/server` turns one into a status code —
 // an HTTP status raised inside a use case is the bug this shape exists to prevent.
 var (
 	ErrNotFound      = errors.New("not found")
@@ -34,7 +34,7 @@ func (e *Error) Error() string { return e.msg }
 func (e *Error) Unwrap() error { return e.kind }
 
 // NotFound is also the answer for a sandbox owned by somebody else: ownership failures
-// and missing rows are deliberately indistinguishable (SPEC.md, "Auth").
+// and missing rows are deliberately indistinguishable (DESIGN.md, "Trust").
 func NotFound(what string) error { return &Error{ErrNotFound, what + " not found"} }
 
 func Conflict(format string, args ...any) error {

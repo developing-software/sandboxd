@@ -38,8 +38,8 @@ type Config struct {
 	Path        string
 }
 
-// hostFile is the on-disk identity, at the same path and in the same shape the TypeScript
-// worker wrote, so a host that is migrated keeps its fingerprint and stays approved.
+// hostFile is the on-disk identity. Its path and shape are fixed: a host provisioned by an
+// earlier release keeps its fingerprint across upgrades and stays approved.
 type hostFile struct {
 	Secret string `json:"secret"`
 	Name   string `json:"name,omitempty"`
@@ -53,7 +53,7 @@ const (
 	secretBytes    = 32
 	maxTagLength   = 64
 	DriverDocker   = "docker"
-	DriverK8s      = "kubernetes" // PLAN.md phase 5
+	DriverK8s      = "kubernetes" // reserved; not implemented (DESIGN.md decision 14)
 	tagsSeparator  = ","
 	configFileMode = 0o600
 	configDirMode  = 0o700
@@ -154,7 +154,7 @@ func loadHostFile(path string) (hostFile, error) {
 }
 
 // loadTags reports what this machine is. `arch:`, `os:` and `driver:` are not configurable
-// — they are facts — and the operator adds the rest (SPEC.md, "Tags").
+// — they are facts — and the operator adds the rest (DESIGN.md decision 8).
 func loadTags(extra, drv string) ([]string, error) {
 	tags := []string{"arch:" + runtime.GOARCH, "os:" + runtime.GOOS, "driver:" + drv}
 	for _, tag := range strings.Split(extra, tagsSeparator) {

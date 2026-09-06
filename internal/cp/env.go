@@ -6,8 +6,9 @@ import (
 	"slices"
 )
 
-// Rules for a caller-supplied env map, applied identically to `env` and `secret_env`
-// (SPEC.md, "Env rules"). huma cannot express them, so they run in the use case.
+// Rules for a caller-supplied env map, applied identically to `env` and `secret_env`.
+// They are semantics an OpenAPI schema cannot state — a reserved name, a byte budget
+// across keys and values — so they run here rather than in the generated validator.
 
 // reserved names are set by the worker on every PTY; a caller may not override them.
 var reserved = map[string]struct{}{

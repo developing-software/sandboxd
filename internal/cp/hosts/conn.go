@@ -62,7 +62,7 @@ type Conn struct {
 	running int
 	max     int
 	// next is the id of the stream to allocate. CP-allocated ids are odd and are never
-	// reused within a connection (SPEC.md, "Wire protocol").
+	// reused within a connection (DESIGN.md, "Wire protocol").
 	next    uint32
 	streams map[uint32]*Stream
 }

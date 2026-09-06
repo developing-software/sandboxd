@@ -50,6 +50,6 @@ func check(expected, given string) error {
 }
 
 var (
-	_ clientapi.SecurityHandler  = clientAuth{}
-	_ adminapi.SecurityHandler = adminAuth{}
+	_ clientapi.SecurityHandler = clientAuth{}
+	_ adminapi.SecurityHandler  = adminAuth{}
 )

@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// SPEC.md's wire table, transcribed. Each case is the struct a daemon writes and the exact
-// bytes that go on the socket, both directions, so a field rename cannot pass unnoticed.
+// The wire table, one case per message. Each case is the struct a daemon writes and the
+// exact bytes that go on the socket, both directions, so a field rename cannot pass
+// unnoticed.
 var (
 	hostCases = []struct {
 		name string

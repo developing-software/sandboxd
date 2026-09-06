@@ -18,8 +18,8 @@ import (
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/attach"
 	"sandboxd/internal/cp/hosts"
-	"sandboxd/internal/cp/server"
 	"sandboxd/internal/cp/preview"
+	"sandboxd/internal/cp/server"
 	"sandboxd/internal/cp/store"
 )
 
@@ -62,7 +62,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// fact: hosts report, the scheduler reacts, and neither knows the other's type.
 	events := make(chan cp.Event, eventQueue)
 	hub := hosts.NewHub(st, cfg.JoinToken, events, log)
-	sched := cp.NewScheduler(st, hub, cfg.SandboxEnv, events, log)
+	sched := cp.NewScheduler(st, hub, cp.MostFreeSlots, cfg.SandboxEnv, events, log)
 	if err := sched.Boot(); err != nil {
 		return fmt.Errorf("boot: %w", err)
 	}
@@ -74,7 +74,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Tokens:       tokens,
 		Sandboxes:    sandboxes,
 		Hosts:        hosts.NewService(st, hub, log),
-		Attach:       attach.NewBridge(sandboxes, hub, log),
+		Attach:       attach.NewBridge(sandboxes, attach.Open(hub.OpenPTY), log),
 		Preview:      preview.NewProxy(sandboxes, hub, tokens, cfg.PreviewDomain, log),
 		Tunnel:       hub.Serve,
 		Log:          log,

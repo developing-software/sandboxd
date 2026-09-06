@@ -5,9 +5,11 @@ go 1.26
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/containerd/errdefs v1.0.0
-	github.com/danielgtaylor/huma/v2 v2.39.1
+	github.com/go-faster/errors v0.8.0
+	github.com/go-faster/jx v1.2.0
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/moby/client v0.6.0
+	github.com/ogen-go/ogen v1.24.0
 	modernc.org/sqlite v1.58.0
 )
 
@@ -23,8 +25,6 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
-	github.com/go-faster/errors v0.8.0 // indirect
-	github.com/go-faster/jx v1.2.0 // indirect
 	github.com/go-faster/yaml v0.4.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -33,7 +33,6 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/ogen-go/ogen v1.24.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

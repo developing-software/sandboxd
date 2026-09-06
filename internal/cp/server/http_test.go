@@ -16,12 +16,12 @@ import (
 	"github.com/coder/websocket"
 
 	"sandboxd/api"
-	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/attach"
 	"sandboxd/internal/cp/hosts"
 	"sandboxd/internal/cp/preview"
 	"sandboxd/internal/cp/store"
+	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/gen/clientapi"
 )
 
@@ -61,7 +61,7 @@ func newHarness(t *testing.T) *harness {
 	tokens := cp.NewTokens("k")
 	events := make(chan cp.Event, 16)
 	hub := hosts.NewHub(st, joinToken, events, log)
-	sched := cp.NewScheduler(st, hub, nil, events, log)
+	sched := cp.NewScheduler(st, hub, cp.MostFreeSlots, nil, events, log)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	go sched.Run(ctx)
@@ -72,7 +72,7 @@ func newHarness(t *testing.T) *harness {
 		Tokens:       tokens,
 		Sandboxes:    svc,
 		Hosts:        hosts.NewService(st, hub, log),
-		Attach:       attach.NewBridge(svc, hub, log),
+		Attach:       attach.NewBridge(svc, attach.Open(hub.OpenPTY), log),
 		Preview:      preview.NewProxy(svc, hub, tokens, cfg.PreviewDomain, log),
 		Tunnel:       hub.Serve,
 		Log:          log,

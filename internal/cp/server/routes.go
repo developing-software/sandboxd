@@ -12,9 +12,9 @@ import (
 	"strconv"
 
 	"sandboxd/api"
-	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/preview"
+	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/gen/clientapi"
 	"sandboxd/internal/wire"
 )

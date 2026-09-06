@@ -50,9 +50,8 @@ func LoadConfig(environ []string) (Config, error) {
 		SandboxEnv:    map[string]string{},
 	}
 
-	// Fails closed, unlike the TypeScript control plane it replaces (PLAN.md, "Bugs to
-	// fix in the port, not carry"): a production binary that silently accepts a published
-	// default token is worse than one that refuses to boot.
+	// Fails closed: a production binary that silently accepts a published default token
+	// is worse than one that refuses to boot.
 	if cfg.ServiceToken == "" {
 		if env["SANDBOXD_DEV"] != "1" {
 			return Config{}, fmt.Errorf(

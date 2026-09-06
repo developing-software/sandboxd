@@ -6,9 +6,7 @@ import (
 )
 
 func TestConfigFailsClosedOnTheServiceToken(t *testing.T) {
-	// The one intended break from "every variable and default unchanged": the TypeScript
-	// control plane defaulted to a published token with a warning (PLAN.md, "Bugs to fix
-	// in the port, not carry").
+	// There is no default token: the published dev value is accepted only when asked for.
 	if _, err := LoadConfig(nil); err == nil {
 		t.Fatal("a control plane with no service token must refuse to boot")
 	}

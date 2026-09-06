@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"sandboxd/internal/gen/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/store"
+	"sandboxd/internal/gen/adminapi"
 )
 
 // Host admin use cases behind the operator API: list, approve, revoke. The view type is

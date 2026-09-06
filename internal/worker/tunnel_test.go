@@ -17,8 +17,8 @@ import (
 )
 
 // fakeCP is the control plane's half of the tunnel: a real WebSocket server speaking the
-// real wire. It is what phase 2 has instead of a control plane (PLAN.md, "Validation
-// without a second implementation").
+// real wire. The transport is the boundary here, so this is the one fake the worker suite
+// is allowed.
 type fakeCP struct {
 	srv   *httptest.Server
 	conns chan *cpConn

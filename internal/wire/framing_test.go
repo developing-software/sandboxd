@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// The fixtures are the TypeScript implementation's own output, frozen (PLAN.md phase 1).
-// Framing was never renamed, so they still pin both implementations to the same bytes.
+// The fixtures are frames from the first implementation, frozen: a worker from an older
+// release must still be understood, so a change that fails them is a wire break.
 type framingFixture struct {
 	Cases []struct {
 		Name    string `json:"name"`

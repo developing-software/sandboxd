@@ -125,7 +125,7 @@ func TestLoadConfigRejects(t *testing.T) {
 }
 
 // arch, os and driver are facts about the machine, not settings; the operator adds the
-// rest (SPEC.md, "Tags").
+// rest (DESIGN.md decision 8).
 func TestTags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "host.json")
 	cfg, err := LoadConfig(env(map[string]string{

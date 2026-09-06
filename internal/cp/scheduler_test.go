@@ -115,7 +115,7 @@ func newHarness(t *testing.T, sandboxEnv map[string]string) *harness {
 
 	hub := newFakeHub()
 	events := make(chan Event, 16)
-	sched := NewScheduler(st, hub, sandboxEnv, events, discard())
+	sched := NewScheduler(st, hub, MostFreeSlots, sandboxEnv, events, discard())
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	go sched.Run(ctx)
@@ -279,8 +279,8 @@ func TestHostOnlineReconcilesBothDirections(t *testing.T) {
 	if got := h.get("s_2"); got.Status != store.Running || got.UnknownSince != nil {
 		t.Errorf("reported sandbox = %+v, want running and no longer doubted", got)
 	}
-	// The direction the TypeScript control plane never reconciled: a container the CP has
-	// no row for is reclaimed instead of running forever (PLAN.md, bug 1).
+	// The other direction: a container the CP has no row for is reclaimed instead of
+	// running forever.
 	if got := h.hub.gone(); !slices.Equal(got, []string{"s_orphan"}) {
 		t.Errorf("destroyed = %v, want the orphan reclaimed", got)
 	}
