@@ -13,6 +13,8 @@ import (
 
 	"github.com/coder/websocket"
 
+	"sandboxd/internal/sandbox"
+	"sandboxd/internal/sandbox/sandboxtest"
 	"sandboxd/internal/wire"
 )
 
@@ -127,7 +129,9 @@ func (c *cpConn) sendBinary(t *testing.T, id uint32, payload []byte) {
 }
 
 type tunnelHarness struct {
-	*harness
+	ctx    context.Context
+	mgr    *sandbox.Manager
+	drv    *sandboxtest.Driver
 	cp     *fakeCP
 	tunnel *Tunnel
 	cfg    Config
@@ -135,19 +139,22 @@ type tunnelHarness struct {
 
 func newTunnelHarness(t *testing.T) *tunnelHarness {
 	t.Helper()
-	h := newHarness(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
 	cp := newFakeCP(t)
 	cfg := Config{
-		URL:          cp.srv.URL,
-		Name:         "box",
-		MaxSandboxes: 4,
-		Fingerprint:  "fp-1234567890",
-		Tags:         []string{"arch:" + runtime.GOARCH, "driver:docker", "os:" + runtime.GOOS},
+		URL:         cp.srv.URL,
+		Name:        "box",
+		Fingerprint: "fp-1234567890",
+		Tags:        []string{"arch:" + runtime.GOARCH, "driver:docker", "os:" + runtime.GOOS},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	tunnel := NewTunnel(cfg, h.mgr, h.drv, h.events, log)
-	go tunnel.Run(h.ctx)
-	return &tunnelHarness{harness: h, cp: cp, tunnel: tunnel, cfg: cfg}
+	drv := sandboxtest.New()
+	events := make(chan sandbox.Event, 32)
+	mgr := sandbox.NewManager(ctx, drv, []string{"/entry"}, 4, events, log)
+	tunnel := NewTunnel(cfg, mgr, events, log)
+	go tunnel.Run(ctx)
+	return &tunnelHarness{ctx: ctx, mgr: mgr, drv: drv, cp: cp, tunnel: tunnel, cfg: cfg}
 }
 
 // The whole sequence, in one test, because the sequence is what phase 2 has to prove:
@@ -179,11 +186,18 @@ func TestTunnelCarriesASandboxEndToEnd(t *testing.T) {
 	if msg := cp.next(t); !isStarted(msg, "s_1") {
 		t.Fatalf("after create: %#v, want sandbox.started s_1", msg)
 	}
-	pty := h.drv.pty(t, "c1")
+	pty := h.drv.PTY(t, "c1")
 
 	// --- attach, and the replay marker before the tail --------------------------
-	pty.say(t, "printed before attaching")
-	waitFor(t, func() bool { return len(h.box(t, "s_1").fan.ring.Snapshot()) > 0 })
+	// A throwaway viewer proves the bytes reached the ring: the fanout pushes there and
+	// to every viewer under one lock, so once this one has them, so does the ring.
+	witness, _, err := h.mgr.Attach("s_1", wire.Size{Cols: 120, Rows: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pty.Say(t, "printed before attaching")
+	<-witness.Bytes()
+	witness.Close()
 
 	cp.send(t, &wire.PtyOpen{SID: "s_1", Stream: 1, Size: wire.Size{Cols: 100, Rows: 30}})
 	replay, isReplay := cp.next(t).(*wire.PtyReplay)
@@ -193,23 +207,23 @@ func TestTunnelCarriesASandboxEndToEnd(t *testing.T) {
 	if got := string(cp.binary(t, 1)); got != "printed before attaching" {
 		t.Errorf("replayed %q", got)
 	}
-	if got := <-pty.resizes; got != (wire.Size{Cols: 100, Rows: 30}) {
+	if got := <-pty.Resizes; got != (wire.Size{Cols: 100, Rows: 30}) {
 		t.Errorf("resize on attach = %+v", got)
 	}
 
 	// --- live output, then input ------------------------------------------------
-	pty.say(t, "live")
+	pty.Say(t, "live")
 	if got := string(cp.binary(t, 1)); got != "live" {
 		t.Errorf("live output = %q", got)
 	}
 
 	cp.sendBinary(t, 1, []byte("typed"))
-	if got := string(<-pty.input); got != "typed" {
+	if got := string(<-pty.Input); got != "typed" {
 		t.Errorf("input = %q", got)
 	}
 
 	cp.send(t, &wire.PtyResize{SID: "s_1", Size: wire.Size{Cols: 80, Rows: 24}})
-	if got := <-pty.resizes; got != (wire.Size{Cols: 80, Rows: 24}) {
+	if got := <-pty.Resizes; got != (wire.Size{Cols: 80, Rows: 24}) {
 		t.Errorf("resize = %+v", got)
 	}
 

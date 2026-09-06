@@ -10,99 +10,123 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"sandboxd/internal/conf"
+	"sandboxd/internal/sandbox/docker"
 )
 
-func env(pairs map[string]string) func(string) string {
-	return func(k string) string { return pairs[k] }
+func env(pairs map[string]string) conf.Lookup {
+	return func(k string) (string, bool) {
+		v, ok := pairs[k]
+		return v, ok
+	}
 }
 
-func TestLoadConfigDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "host.json")
-	cfg, err := LoadConfig(env(map[string]string{"SANDBOXD_WORKER_CONFIG": path}))
+func writeFile(t *testing.T, name, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestFileConfig(t *testing.T) {
+	token := writeFile(t, "join", "jt\n")
+	path := writeFile(t, "worker.yaml", `
+url: wss://cp.example.com//
+name: ${HOST_NAME:-box}
+tags: [gpu:a100]
+join_token_file: `+token+`
+identity: /var/lib/sandboxd-worker/host.json
+driver:
+  docker:
+    sock: /run/docker.sock
+    max_sandboxes: 2
+`)
+	cfg, err := Load(path, env(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := Config{
+		URL:       "wss://cp.example.com", // the tunnel appends /tunnel; a double slash is another route
+		Name:      "box",
+		Tags:      []string{"arch:" + runtime.GOARCH, "driver:docker", "gpu:a100", "os:" + runtime.GOOS},
+		JoinToken: "jt",
+		Identity:  "/var/lib/sandboxd-worker/host.json",
+		Driver:    Driver{Docker: &docker.Config{Sock: "/run/docker.sock", Entry: "/usr/local/bin/sandboxd-entry", MaxSandboxes: 2}},
+	}
+	if !reflect.DeepEqual(cfg, want) {
+		t.Errorf("config\n got %+v %+v\nwant %+v %+v", cfg, cfg.Driver.Docker, want, want.Driver.Docker)
+	}
+	if got := cfg.Redacted().JoinToken; got != "***" {
+		t.Errorf("redacted join token = %q", got)
+	}
+}
 
+func TestFileConfigRejects(t *testing.T) {
+	for name, body := range map[string]string{
+		"no driver block":                "url: ws://x\n",
+		"an unknown key":                 "driver: {docker: {socket: /x}}\n",
+		"a bad tag":                      "tags: ['has space']\ndriver: {docker: {}}\n",
+		"a driver that is not built yet": "driver: {kubernetes: {}}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeFile(t, "worker.yaml", body), env(nil)); err == nil {
+				t.Error("expected an error")
+			}
+		})
+	}
+}
+
+func TestLegacyEnvDefaults(t *testing.T) {
+	cfg, err := Load("", env(map[string]string{"SANDBOXD_WORKER_CONFIG": "/tmp/host.json"}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.URL != defaultURL {
 		t.Errorf("URL = %q", cfg.URL)
 	}
-	if cfg.MaxSandboxes != defaultMax {
-		t.Errorf("MaxSandboxes = %d", cfg.MaxSandboxes)
+	if cfg.Identity != "/tmp/host.json" {
+		t.Errorf("the old identity variable must still be honoured: %q", cfg.Identity)
 	}
-	if !reflect.DeepEqual(cfg.Entry, []string{defaultEntry}) {
-		t.Errorf("Entry = %v", cfg.Entry)
-	}
-	if cfg.DockerSock != defaultSock || cfg.Driver != DriverDocker {
-		t.Errorf("DockerSock = %q, Driver = %q", cfg.DockerSock, cfg.Driver)
-	}
-	if cfg.Name == "" {
-		t.Error("Name should fall back to the hostname")
+	d := cfg.Driver.Docker
+	if d == nil || d.MaxSandboxes != 4 || d.Sock != "/var/run/docker.sock" || d.EntryCommand()[0] != "/usr/local/bin/sandboxd-entry" {
+		t.Errorf("driver = %+v", d)
 	}
 }
 
-// The host file is this machine's identity. A migrated host keeps its fingerprint, so the
-// control plane still recognises it and it stays approved.
-func TestHostFileIsCreatedOnceAndReused(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nested", "host.json")
-	getenv := env(map[string]string{"SANDBOXD_WORKER_CONFIG": path})
-
-	first, err := LoadConfig(getenv)
+func TestLegacyEnvIsReadUnchanged(t *testing.T) {
+	cfg, err := Load("", env(map[string]string{
+		"SANDBOXD_URL":                 "wss://cp.example.com/",
+		"SANDBOXD_WORKER_NAME":         "old-box",
+		"SANDBOXD_WORKER_MAX_SESSIONS": "9",
+		"SANDBOXD_WORKER_ENTRY":        `["bash","-l"]`,
+		"SANDBOXD_WORKER_TAGS":         " virt:vm , gpu ,, region:eu, gpu",
+		"SANDBOXD_WORKER_IDENTITY":     "/id.json",
+		"SANDBOXD_JOIN_TOKEN":          "jt",
+		"DOCKER_SOCK":                  "/run/docker.sock",
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
+	if cfg.URL != "wss://cp.example.com" || cfg.Name != "old-box" || cfg.JoinToken != "jt" || cfg.Identity != "/id.json" {
+		t.Errorf("config = %+v", cfg)
 	}
-	if info.Mode().Perm() != configFileMode {
-		t.Errorf("mode = %v, want %v", info.Mode().Perm(), configFileMode)
+	d := cfg.Driver.Docker
+	if d.MaxSandboxes != 9 || d.Sock != "/run/docker.sock" || !reflect.DeepEqual(d.EntryCommand(), []string{"bash", "-l"}) {
+		t.Errorf("driver = %+v", d)
 	}
-
-	sum := sha256.Sum256([]byte(first.Secret))
-	if first.Fingerprint != hex.EncodeToString(sum[:]) {
-		t.Error("the fingerprint is sha256 of the secret, hex")
+	want := []string{
+		"arch:" + runtime.GOARCH, "driver:docker", "gpu",
+		"os:" + runtime.GOOS, "region:eu", "virt:vm",
 	}
-	if strings.Contains(first.Fingerprint, first.Secret) {
-		t.Error("the fingerprint must not carry the secret")
-	}
-
-	second, err := LoadConfig(getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Secret != first.Secret || second.Fingerprint != first.Fingerprint {
-		t.Error("a second start must reuse the identity on disk")
+	if !reflect.DeepEqual(cfg.Tags, want) {
+		t.Errorf("Tags\n got %v\nwant %v (sorted, deduplicated, blanks dropped)", cfg.Tags, want)
 	}
 }
 
-// The shape the TypeScript worker wrote, read back unchanged.
-func TestHostFileFromTheTypeScriptWorker(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "host.json")
-	body := []byte(`{"secret": "abcdefgh", "name": "old-box"}`)
-	if err := os.WriteFile(path, body, configFileMode); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadConfig(env(map[string]string{"SANDBOXD_WORKER_CONFIG": path}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Secret != "abcdefgh" || cfg.Name != "old-box" {
-		t.Errorf("got secret %q name %q", cfg.Secret, cfg.Name)
-	}
-
-	// And is not rewritten under the worker's feet.
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(body) {
-		t.Errorf("host file was rewritten: %s", after)
-	}
-}
-
-func TestLoadConfigRejects(t *testing.T) {
-	dir := t.TempDir()
+func TestLegacyEnvRejects(t *testing.T) {
 	tests := []struct {
 		name string
 		vars map[string]string
@@ -115,8 +139,7 @@ func TestLoadConfigRejects(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.vars["SANDBOXD_WORKER_CONFIG"] = filepath.Join(dir, "host.json")
-			_, err := LoadConfig(env(tt.vars))
+			_, err := Load("", env(tt.vars))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want one mentioning %q", err, tt.want)
 			}
@@ -124,68 +147,66 @@ func TestLoadConfigRejects(t *testing.T) {
 	}
 }
 
-// arch, os and driver are facts about the machine, not settings; the operator adds the
-// rest (DESIGN.md decision 8).
-func TestTags(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "host.json")
-	cfg, err := LoadConfig(env(map[string]string{
-		"SANDBOXD_WORKER_CONFIG": path,
-		"SANDBOXD_WORKER_TAGS":   " virt:vm , gpu ,, region:eu, gpu",
-	}))
+// The host file is this machine's identity. A migrated host keeps its fingerprint, so the
+// control plane still recognises it and it stays approved.
+func TestIdentityIsCreatedOnceAndReused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "host.json")
+	first := Config{Identity: path}
+	if err := first.LoadIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	want := []string{
-		"arch:" + runtime.GOARCH, "driver:docker", "gpu",
-		"os:" + runtime.GOOS, "region:eu", "virt:vm",
+	if info.Mode().Perm() != configFileMode {
+		t.Errorf("mode = %v, want %v", info.Mode().Perm(), configFileMode)
 	}
-	if !reflect.DeepEqual(cfg.Tags, want) {
-		t.Errorf("Tags\n got %v\nwant %v (sorted, deduplicated, blanks dropped)", cfg.Tags, want)
+	sum := sha256.Sum256([]byte(first.Secret))
+	if first.Fingerprint != hex.EncodeToString(sum[:]) {
+		t.Error("the fingerprint is sha256 of the secret, hex")
+	}
+	if strings.Contains(first.Fingerprint, first.Secret) {
+		t.Error("the fingerprint must not carry the secret")
+	}
+	if first.Name == "" {
+		t.Error("Name should fall back to the hostname")
+	}
+
+	second := Config{Identity: path}
+	if err := second.LoadIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	if second.Secret != first.Secret || second.Fingerprint != first.Fingerprint {
+		t.Error("a second start must reuse the identity on disk")
 	}
 }
 
-func TestEntryParsing(t *testing.T) {
-	tests := []struct {
-		raw  string
-		want []string
-	}{
-		// What the NixOS module writes.
-		{`["/usr/local/bin/sandboxd-entry"]`, []string{"/usr/local/bin/sandboxd-entry"}},
-		{`["bash","-lc","echo hi"]`, []string{"bash", "-lc", "echo hi"}},
-		{`bash -l`, []string{"bash", "-l"}},
-		{`  /entry  `, []string{"/entry"}},
-		// Not an array after all: treated as a command line rather than failing to boot.
-		{`[oops`, []string{"[oops"}},
+// The shape the TypeScript worker wrote, read back unchanged.
+func TestIdentityFromTheTypeScriptWorker(t *testing.T) {
+	body := `{"secret": "abcdefgh", "name": "old-box"}`
+	path := writeFile(t, "host.json", body)
+	cfg := Config{Identity: path}
+	if err := cfg.LoadIdentity(); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		if got := parseEntry(tt.raw); !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("parseEntry(%q) = %v, want %v", tt.raw, got, tt.want)
-		}
+	if cfg.Secret != "abcdefgh" || cfg.Name != "old-box" {
+		t.Errorf("got secret %q name %q", cfg.Secret, cfg.Name)
 	}
-}
-
-func TestConfigURLLosesItsTrailingSlash(t *testing.T) {
-	cfg, err := LoadConfig(env(map[string]string{
-		"SANDBOXD_WORKER_CONFIG": filepath.Join(t.TempDir(), "host.json"),
-		"SANDBOXD_URL":           "wss://cp.example.com//",
-	}))
+	// And is not rewritten under the worker's feet.
+	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The tunnel appends /tunnel; a double slash is a different route.
-	if cfg.URL != "wss://cp.example.com" {
-		t.Errorf("URL = %q", cfg.URL)
+	if string(after) != body {
+		t.Errorf("host file was rewritten: %s", after)
 	}
 }
 
-func TestHostFileWithoutASecretIsAnError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "host.json")
+func TestIdentityWithoutASecretIsAnError(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"name": "box"})
-	if err := os.WriteFile(path, body, configFileMode); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadConfig(env(map[string]string{"SANDBOXD_WORKER_CONFIG": path})); err == nil {
+	cfg := Config{Identity: writeFile(t, "host.json", string(body))}
+	if err := cfg.LoadIdentity(); err == nil {
 		t.Error("a host file with no secret has no identity; it must not be silently replaced")
 	}
 }

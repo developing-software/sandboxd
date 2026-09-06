@@ -1,4 +1,5 @@
-package driver
+// Package docker runs sandboxes as containers on a Docker Engine, over the moby client.
+package docker
 
 import (
 	"context"
@@ -14,6 +15,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 
+	"sandboxd/internal/sandbox"
 	"sandboxd/internal/wire"
 )
 
@@ -25,8 +27,8 @@ const (
 	labelHost    = "sandboxd.host"
 )
 
-// Docker runs sandboxes as containers on the local Engine.
-type Docker struct {
+// Driver runs sandboxes as containers on the local Engine.
+type Driver struct {
 	cli *client.Client
 	// owner scopes create, list and sweep to this worker's identity, so several workers
 	// sharing one Engine never reclaim each other's containers.
@@ -34,22 +36,25 @@ type Docker struct {
 	log   *slog.Logger
 }
 
-// NewDocker connects to the Engine on a unix socket path (DOCKER_SOCK).
-func NewDocker(sock, owner string, log *slog.Logger) (*Docker, error) {
+// New connects to the Engine on cfg.Sock. owner scopes create, list and sweep to one
+// identity — a worker's fingerprint, or a provider's — so several sharing one Engine
+// never reclaim each other's containers.
+func New(cfg Config, owner string, log *slog.Logger) (*Driver, error) {
+	sock := cfg.Sock
 	// Version negotiation is on by default in this client, so an older Engine on a host
 	// still works without asking for it.
 	cli, err := client.New(client.WithHost("unix://" + sock))
 	if err != nil {
 		return nil, fmt.Errorf("docker: connect %s: %w", sock, err)
 	}
-	return &Docker{cli: cli, owner: owner, log: log}, nil
+	return &Driver{cli: cli, owner: owner, log: log}, nil
 }
 
-func (d *Docker) Close() error { return d.cli.Close() }
+func (d *Driver) Close() error { return d.cli.Close() }
 
 // Create starts a container kept idle on `sleep infinity`, so a PTY can be exec'd into it
 // later. No env is set here: the sandbox's own env, secrets included, arrives at exec.
-func (d *Docker) Create(ctx context.Context, sid, img string) (string, error) {
+func (d *Driver) Create(ctx context.Context, sid, img string) (string, error) {
 	init := true
 	opts := client.ContainerCreateOptions{
 		Config: &container.Config{
@@ -89,7 +94,7 @@ func (d *Docker) Create(ctx context.Context, sid, img string) (string, error) {
 // refresh re-pulls a reference that someone else can move under us. Create below misses
 // only when nothing is cached at all, so without this a host runs the copy it pulled first
 // for as long as it lives — a republished `:latest` reaching nobody.
-func (d *Docker) refresh(ctx context.Context, img string) {
+func (d *Driver) refresh(ctx context.Context, img string) {
 	if !movesUnderUs(img) || d.builtHere(ctx, img) {
 		return
 	}
@@ -116,7 +121,7 @@ func movesUnderUs(img string) bool {
 // builtHere reports an image this Engine built and never got from a registry, which has no
 // repo digest. images/README.md documents building under the published tag to try an entry
 // script without pushing one, and a refresh would silently pull that work away.
-func (d *Docker) builtHere(ctx context.Context, img string) bool {
+func (d *Driver) builtHere(ctx context.Context, img string) bool {
 	res, err := d.cli.ImageInspect(ctx, img)
 	if err != nil {
 		return false // absent, most likely, and the pull is needed either way
@@ -124,7 +129,7 @@ func (d *Docker) builtHere(ctx context.Context, img string) bool {
 	return len(res.RepoDigests) == 0
 }
 
-func (d *Docker) pull(ctx context.Context, img string) error {
+func (d *Driver) pull(ctx context.Context, img string) error {
 	body, err := d.cli.ImagePull(ctx, img, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("docker: pull %s: %w", img, err)
@@ -140,13 +145,13 @@ func (d *Docker) pull(ctx context.Context, img string) error {
 
 // Attach execs cmd in a PTY inside the container. With a TTY the hijacked connection is
 // the raw terminal in both directions — no stdcopy framing to undo.
-func (d *Docker) Attach(
+func (d *Driver) Attach(
 	ctx context.Context,
 	id string,
 	cmd []string,
 	env map[string]string,
 	size wire.Size,
-) (PTY, error) {
+) (sandbox.PTY, error) {
 	exec, err := d.cli.ExecCreate(ctx, id, client.ExecCreateOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -170,7 +175,7 @@ func (d *Docker) Attach(
 }
 
 // Dial opens a TCP connection to a port inside the container, for the preview proxy.
-func (d *Docker) Dial(ctx context.Context, id string, port int) (net.Conn, error) {
+func (d *Driver) Dial(ctx context.Context, id string, port int) (net.Conn, error) {
 	if port < 1 || port > 65535 {
 		return nil, fmt.Errorf("docker: port %d is out of range", port)
 	}
@@ -192,7 +197,7 @@ func (d *Docker) Dial(ctx context.Context, id string, port int) (net.Conn, error
 	return conn, nil
 }
 
-func (d *Docker) Destroy(ctx context.Context, id string) error {
+func (d *Driver) Destroy(ctx context.Context, id string) error {
 	_, err := d.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{
 		Force:         true,
 		RemoveVolumes: true,
@@ -207,7 +212,7 @@ func (d *Docker) Destroy(ctx context.Context, id string) error {
 
 // ListManaged is the orphan sweep's input: every container this worker identity created,
 // running or not.
-func (d *Docker) ListManaged(ctx context.Context) ([]Managed, error) {
+func (d *Driver) ListManaged(ctx context.Context) ([]sandbox.Managed, error) {
 	res, err := d.cli.ContainerList(ctx, client.ContainerListOptions{
 		All: true,
 		Filters: client.Filters{}.
@@ -217,9 +222,9 @@ func (d *Docker) ListManaged(ctx context.Context) ([]Managed, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker: list: %w", err)
 	}
-	out := make([]Managed, 0, len(res.Items))
+	out := make([]sandbox.Managed, 0, len(res.Items))
 	for _, c := range res.Items {
-		out = append(out, Managed{ID: c.ID, SID: c.Labels[labelSID]})
+		out = append(out, sandbox.Managed{ID: c.ID, SID: c.Labels[labelSID]})
 	}
 	return out, nil
 }
@@ -255,7 +260,7 @@ func envList(env map[string]string) []string {
 	for k, v := range env {
 		out = append(out, k+"="+v)
 	}
-	// Docker takes a list; sorting keeps a container's config reproducible.
+	// Driver takes a list; sorting keeps a container's config reproducible.
 	slices.Sort(out)
 	return out
 }

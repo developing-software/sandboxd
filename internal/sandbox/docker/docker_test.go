@@ -1,4 +1,4 @@
-package driver
+package docker
 
 import (
 	"bytes"
@@ -12,27 +12,28 @@ import (
 	"testing"
 	"time"
 
+	"sandboxd/internal/sandbox"
 	"sandboxd/internal/wire"
 )
 
 // The one test that talks to a real Engine. It is the phase 2 checklist's driver half —
 // create, exec a PTY, dial a port inside the container, destroy, sweep by label — and it
-// needs Docker, so `go test ./...` on a machine without it still passes.
+// needs Driver, so `go test ./...` on a machine without it still passes.
 //
-//	SANDBOXD_DOCKER_TEST=1 go test ./internal/worker/driver/
+//	SANDBOXD_DOCKER_TEST=1 go test ./internal/sandbox/docker/
 const testImage = "alpine:3"
 
-func liveDocker(t *testing.T) *Docker {
+func liveDocker(t *testing.T) *Driver {
 	t.Helper()
 	if os.Getenv("SANDBOXD_DOCKER_TEST") == "" {
-		t.Skip("set SANDBOXD_DOCKER_TEST=1 to run against a real Docker Engine")
+		t.Skip("set SANDBOXD_DOCKER_TEST=1 to run against a real Driver Engine")
 	}
 	sock := os.Getenv("DOCKER_SOCK")
 	if sock == "" {
 		sock = "/var/run/docker.sock"
 	}
 	// A distinct owner, so this never touches a real worker's containers on the machine.
-	d, err := NewDocker(sock, "go-test-"+wire.RandomID(4), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d, err := New(Config{Sock: sock}, "go-test-"+wire.RandomID(4), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestDockerRunsASandbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.ContainsFunc(managed, func(m Managed) bool { return m.ID == id && m.SID == sid }) {
+	if !slices.ContainsFunc(managed, func(m sandbox.Managed) bool { return m.ID == id && m.SID == sid }) {
 		t.Errorf("ListManaged = %v, want the container we created", managed)
 	}
 
@@ -157,7 +158,7 @@ func readUntil(t *testing.T, r io.Reader, want string) string {
 	return ""
 }
 
-func dialWithRetry(t *testing.T, ctx context.Context, d *Docker, id string, port int) net.Conn {
+func dialWithRetry(t *testing.T, ctx context.Context, d *Driver, id string, port int) net.Conn {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for {

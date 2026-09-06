@@ -59,7 +59,8 @@ func TestAnUnknownFingerprintBecomesAPendingRow(t *testing.T) {
 	if !codeFormat.MatchString(first.host.ApproveCode) {
 		t.Errorf("code = %q, want the format a human types", first.host.ApproveCode)
 	}
-	if !slices.Equal(first.host.Tags, hello("fp1").Tags) {
+	// Plus the provider tag, which is the control plane's fact, not the worker's.
+	if !slices.Equal(first.host.Tags, []string{"arch:amd64", "driver:docker", "os:linux", ProviderTag}) {
 		t.Errorf("tags = %v", first.host.Tags)
 	}
 

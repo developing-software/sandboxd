@@ -1,4 +1,5 @@
-# services.sandboxd.api — the control plane. Every option is one SANDBOXD_* variable from
+# services.sandboxd.api — the control plane, driven through the legacy SANDBOXD_* variables
+# (no /etc/sandboxd/api.yaml yet; see PLAN.md). Every option is one variable from
 # internal/cp/config.go; secrets (SANDBOXD_SERVICE_TOKEN, SANDBOXD_SECRET, SANDBOXD_LLM_*,
 # SANDBOXD_SANDBOX_ENV_*) come from environmentFile and never touch the store.
 {

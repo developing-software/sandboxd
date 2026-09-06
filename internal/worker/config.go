@@ -1,6 +1,6 @@
 // Package worker is the per-host daemon: one outbound tunnel to the control plane, one
 // driver, every PTY and its ring buffer. It shares nothing with the control plane but
-// `wire`.
+// `wire` and `sandbox`.
 package worker
 
 import (
@@ -11,31 +11,50 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 
+	"sandboxd/internal/conf"
+	"sandboxd/internal/sandbox"
+	"sandboxd/internal/sandbox/docker"
 	"sandboxd/internal/wire"
 )
 
-// Config is the worker's whole configuration. Every name here is an existing
-// SANDBOXD_* variable that NixOS modules and terraform envs already set — including
-// SANDBOXD_WORKER_MAX_SESSIONS, which keeps the old word on purpose (DESIGN.md decision 5).
+// DefaultPath is where the file is looked for when neither --config nor SANDBOXD_CONFIG
+// names one.
+const DefaultPath = "/etc/sandboxd/worker.yaml"
+
+// Config is the worker's file. On a worker the daemon is the provider, so `name` and
+// `tags` sit at the top and the runtime under `driver:`, one block, keyed by its name.
 type Config struct {
-	URL          string
-	Name         string
-	MaxSandboxes int
-	DockerSock   string
-	Entry        []string
-	Driver       string
-	Tags         []string
-	// Secret is self-generated and never leaves this machine; Fingerprint is what the
-	// control plane sees and what approval is bound to.
-	Secret      string
-	Fingerprint string
-	JoinToken   string
-	Path        string
+	URL           string   `yaml:"url"`
+	Name          string   `yaml:"name"`
+	Tags          []string `yaml:"tags"`
+	JoinToken     string   `yaml:"join_token,omitempty"`
+	JoinTokenFile string   `yaml:"join_token_file,omitempty"`
+	// Identity is the path of the host's self-generated secret: state, not config, which
+	// is why it stays a separate file.
+	Identity string `yaml:"identity"`
+	Driver   Driver `yaml:"driver"`
+
+	// Secret never leaves this machine; Fingerprint is what the control plane sees and
+	// what approval is bound to. Both come from LoadIdentity, never from the file.
+	Secret      string `yaml:"-"`
+	Fingerprint string `yaml:"-"`
+}
+
+// Driver is the `driver:` block: exactly one of these is set, and its keys are the same
+// block the control plane's `providers.<name>` carries.
+type Driver struct {
+	Docker *docker.Config `yaml:"docker,omitempty"`
+}
+
+// Name is the driver's tag value, and the block that was chosen.
+func (d Driver) Name() string {
+	if d.Docker != nil {
+		return "docker"
+	}
+	return ""
 }
 
 // hostFile is the on-disk identity. Its path and shape are fixed: a host provisioned by an
@@ -47,79 +66,124 @@ type hostFile struct {
 
 const (
 	defaultURL     = "ws://localhost:8080"
-	defaultEntry   = "/usr/local/bin/sandboxd-entry"
-	defaultSock    = "/var/run/docker.sock"
-	defaultMax     = 4
 	secretBytes    = 32
-	maxTagLength   = 64
-	DriverDocker   = "docker"
-	DriverK8s      = "kubernetes" // reserved; not implemented (DESIGN.md decision 14)
-	tagsSeparator  = ","
 	configFileMode = 0o600
 	configDirMode  = 0o700
 )
 
-// LoadConfig reads the environment and the host file, creating the second on first run.
-func LoadConfig(getenv func(string) string) (Config, error) {
-	path := getenv("SANDBOXD_WORKER_CONFIG")
+// Load reads the file at path, or the legacy environment when path is empty, and
+// validates either. The identity is loaded separately: reading config must not create
+// state on disk.
+func Load(path string, lookup conf.Lookup) (Config, error) {
+	var cfg Config
+	var err error
 	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return Config{}, fmt.Errorf("worker: no SANDBOXD_WORKER_CONFIG and no home: %w", err)
-		}
-		path = filepath.Join(home, ".config", "sandboxd", "host.json")
+		cfg, err = legacy(lookup)
+	} else {
+		cfg, err = conf.Load[Config](path, lookup)
 	}
-
-	file, err := loadHostFile(path)
 	if err != nil {
 		return Config{}, err
 	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, fmt.Errorf("worker: %w", err)
+	}
+	return cfg, nil
+}
 
-	max := defaultMax
-	if raw := getenv("SANDBOXD_WORKER_MAX_SESSIONS"); raw != "" {
-		max, err = strconv.Atoi(raw)
-		if err != nil || max < 1 {
+// legacy is today's SANDBOXD_* variables, applied unchanged when no file is found. It
+// keeps deployed units and scripts/dev booting; it is compatibility, not design.
+func legacy(lookup conf.Lookup) (Config, error) {
+	get := func(k string) string { v, _ := lookup(k); return v }
+	drv := docker.Config{Sock: get("DOCKER_SOCK"), Entry: get("SANDBOXD_WORKER_ENTRY")}
+	if raw := get("SANDBOXD_WORKER_MAX_SESSIONS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
 			return Config{}, fmt.Errorf("worker: SANDBOXD_WORKER_MAX_SESSIONS must be a positive integer, got %q", raw)
 		}
+		drv.MaxSandboxes = n
 	}
+	if name := get("SANDBOXD_WORKER_DRIVER"); name != "" && name != "docker" {
+		return Config{}, fmt.Errorf("worker: SANDBOXD_WORKER_DRIVER=%q is not implemented", name)
+	}
+	identity := get("SANDBOXD_WORKER_IDENTITY")
+	if identity == "" {
+		identity = get("SANDBOXD_WORKER_CONFIG") // the old name; cmd warns about it
+	}
+	var tags []string
+	if raw := get("SANDBOXD_WORKER_TAGS"); raw != "" {
+		tags = strings.Split(raw, ",")
+	}
+	return Config{
+		URL:       get("SANDBOXD_URL"),
+		Name:      get("SANDBOXD_WORKER_NAME"),
+		Tags:      tags,
+		JoinToken: get("SANDBOXD_JOIN_TOKEN"),
+		Identity:  identity,
+		Driver:    Driver{Docker: &drv},
+	}, nil
+}
 
-	name := getenv("SANDBOXD_WORKER_NAME")
-	if name == "" {
-		name = file.Name
+// Validate fills defaults, resolves the secret twin and adds the fact tags. The driver
+// block validates itself; this only insists there is exactly one.
+func (c *Config) Validate() error {
+	c.URL = strings.TrimRight(c.URL, "/")
+	if c.URL == "" {
+		c.URL = defaultURL
 	}
-	if name == "" {
-		if name, err = os.Hostname(); err != nil {
-			return Config{}, fmt.Errorf("worker: no SANDBOXD_WORKER_NAME and no hostname: %w", err)
+	if c.Identity == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("no identity path and no home: %w", err)
+		}
+		c.Identity = filepath.Join(home, ".config", "sandboxd", "host.json")
+	}
+	token, err := conf.Secret("join_token", c.JoinToken, c.JoinTokenFile)
+	if err != nil {
+		return err
+	}
+	c.JoinToken, c.JoinTokenFile = token, ""
+
+	if c.Driver.Docker == nil {
+		return errors.New("driver: one block is required (docker)")
+	}
+	if err := c.Driver.Docker.Validate(); err != nil {
+		return fmt.Errorf("driver.docker: %w", err)
+	}
+	if c.Tags, err = sandbox.Tags(c.Driver.Name(), c.Tags); err != nil {
+		return fmt.Errorf("tags: %w", err)
+	}
+	return nil
+}
+
+// LoadIdentity reads the host file at c.Identity, creating it on first run, and fills
+// Secret, Fingerprint and — when nothing else named the host — Name.
+func (c *Config) LoadIdentity() error {
+	file, err := loadHostFile(c.Identity)
+	if err != nil {
+		return err
+	}
+	if c.Name == "" {
+		c.Name = file.Name
+	}
+	if c.Name == "" {
+		if c.Name, err = os.Hostname(); err != nil {
+			return fmt.Errorf("worker: no name and no hostname: %w", err)
 		}
 	}
-
-	drv := getenv("SANDBOXD_WORKER_DRIVER")
-	if drv == "" {
-		drv = DriverDocker
-	}
-	if drv != DriverDocker {
-		return Config{}, fmt.Errorf("worker: SANDBOXD_WORKER_DRIVER=%q is not implemented", drv)
-	}
-
-	tags, err := loadTags(getenv("SANDBOXD_WORKER_TAGS"), drv)
-	if err != nil {
-		return Config{}, err
-	}
-
 	sum := sha256.Sum256([]byte(file.Secret))
-	return Config{
-		URL:          strings.TrimRight(orDefault(getenv("SANDBOXD_URL"), defaultURL), "/"),
-		Name:         name,
-		MaxSandboxes: max,
-		DockerSock:   orDefault(getenv("DOCKER_SOCK"), defaultSock),
-		Entry:        parseEntry(orDefault(getenv("SANDBOXD_WORKER_ENTRY"), defaultEntry)),
-		Driver:       drv,
-		Tags:         tags,
-		Secret:       file.Secret,
-		Fingerprint:  hex.EncodeToString(sum[:]),
-		JoinToken:    getenv("SANDBOXD_JOIN_TOKEN"),
-		Path:         path,
-	}, nil
+	c.Secret = file.Secret
+	c.Fingerprint = hex.EncodeToString(sum[:])
+	return nil
+}
+
+// Redacted is what --check-config prints: the effective configuration with every secret
+// replaced, so the output can be pasted into a bug report.
+func (c Config) Redacted() Config {
+	if c.JoinToken != "" {
+		c.JoinToken = "***"
+	}
+	return c
 }
 
 func loadHostFile(path string) (hostFile, error) {
@@ -151,52 +215,4 @@ func loadHostFile(path string) (hostFile, error) {
 		return hostFile{}, fmt.Errorf("worker: write %s: %w", path, err)
 	}
 	return file, nil
-}
-
-// loadTags reports what this machine is. `arch:`, `os:` and `driver:` are not configurable
-// — they are facts — and the operator adds the rest (DESIGN.md decision 8).
-func loadTags(extra, drv string) ([]string, error) {
-	tags := []string{"arch:" + runtime.GOARCH, "os:" + runtime.GOOS, "driver:" + drv}
-	for _, tag := range strings.Split(extra, tagsSeparator) {
-		tag = strings.TrimSpace(tag)
-		if tag == "" {
-			continue
-		}
-		if err := validTag(tag); err != nil {
-			return nil, fmt.Errorf("worker: SANDBOXD_WORKER_TAGS: %w", err)
-		}
-		tags = append(tags, tag)
-	}
-	slices.Sort(tags)
-	return slices.Compact(tags), nil
-}
-
-// A tag is opaque to the control plane, which compares strings and nothing else. These
-// rules exist so a typo fails here rather than as a sandbox that never places.
-func validTag(tag string) error {
-	if len(tag) > maxTagLength {
-		return fmt.Errorf("tag %q is longer than %d characters", tag, maxTagLength)
-	}
-	if strings.ContainsFunc(tag, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
-		return fmt.Errorf("tag %q contains whitespace or a control character", tag)
-	}
-	return nil
-}
-
-// parseEntry accepts a JSON array (what the NixOS module writes) or a plain command line.
-func parseEntry(raw string) []string {
-	if strings.HasPrefix(strings.TrimSpace(raw), "[") {
-		var out []string
-		if err := json.Unmarshal([]byte(raw), &out); err == nil && len(out) > 0 {
-			return out
-		}
-	}
-	return strings.Fields(raw)
-}
-
-func orDefault(v, fallback string) string {
-	if v == "" {
-		return fallback
-	}
-	return v
 }

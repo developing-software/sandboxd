@@ -29,12 +29,43 @@ linters:
           deny:
             - pkg: sandboxd/internal/worker
               desc: the control plane and the worker meet on the wire, nowhere else
+        # The fleet routes between providers and must not know either, and one provider
+        # must not reach across to the other.
+        fleet:
+          files: ['**/internal/cp/fleet/**']
+          deny:
+            - pkg: sandboxd/internal/cp/hosts
+              desc: providers plug into the fleet, not the other way round
+            - pkg: sandboxd/internal/cp/local
+              desc: providers plug into the fleet, not the other way round
+        local:
+          files: ['**/internal/cp/local/**']
+          deny:
+            - pkg: sandboxd/internal/cp/hosts
+              desc: one provider does not know another
+        # Shared by both daemons, so it may belong to neither.
+        sandbox:
+          files: ['**/internal/sandbox/**']
+          deny:
+            - pkg: sandboxd/internal/cp
+              desc: sandbox is shared code, not a channel between the daemons
+            - pkg: sandboxd/internal/worker
+              desc: sandbox is shared code, not a channel between the daemons
+            - pkg: sandboxd/internal/gen
+              desc: sandbox speaks the wire, not the HTTP API
+        conf:
+          files: ['**/internal/conf/**']
+          deny:
+            - pkg: sandboxd/internal
+              desc: conf is a leaf that knows the file's grammar and nothing of ours
         wire:
           files: ['**/internal/wire/**']
           deny:
             - pkg: sandboxd/internal/cp
               desc: wire is a leaf
             - pkg: sandboxd/internal/worker
+              desc: wire is a leaf
+            - pkg: sandboxd/internal/sandbox
               desc: wire is a leaf
         # Generated code imports nothing of ours today; this is what makes that stay true if
         # a future ogen release or config option changes it.

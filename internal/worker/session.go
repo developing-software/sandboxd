@@ -4,6 +4,8 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+
+	"sandboxd/internal/sandbox"
 )
 
 // Frames waiting on the one writer goroutine. Port copiers and viewer pumps block here;
@@ -36,7 +38,7 @@ type frame struct {
 // which.
 type stream struct {
 	sid    string
-	viewer *Viewer
+	viewer *sandbox.Viewer
 	port   *portStream
 }
 

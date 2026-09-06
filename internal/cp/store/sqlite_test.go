@@ -302,3 +302,37 @@ func ids(rows []Sandbox) []string {
 	}
 	return out
 }
+
+// A provider host is approved at every boot and keeps its id, so sandboxes placed on it
+// before a restart still name a row that exists.
+func TestProviderHostIsUpsertedApproved(t *testing.T) {
+	s := open(t)
+	first, err := s.UpsertProviderHost(Host{Name: "cp", Fingerprint: "fp-provider", MaxSandboxes: 2, Tags: []string{"provider:local"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != HostApproved || first.ID == "" || first.LastSeenAt == nil {
+		t.Fatalf("first = %+v", first)
+	}
+	if err := s.RevokeHost(first.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := s.UpsertProviderHost(Host{Name: "cp2", Fingerprint: "fp-provider", MaxSandboxes: 3, Tags: []string{"provider:local", "gpu"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Errorf("the id changed across boots: %s then %s", first.ID, second.ID)
+	}
+	if second.Status != HostApproved || second.Name != "cp2" || second.MaxSandboxes != 3 || !slices.Equal(second.Tags, []string{"provider:local", "gpu"}) {
+		t.Errorf("second = %+v, want re-approved with the new name, capacity and tags", second)
+	}
+	dump, err := s.Dump("hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(dump, "\n") != 1 || !strings.Contains(dump, "status=approved") || strings.Contains(dump, "approve_code=") && !strings.Contains(dump, "approve_code= ") {
+		t.Errorf("hosts table:\n%s", dump)
+	}
+}

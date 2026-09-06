@@ -9,14 +9,9 @@ import (
 
 	"github.com/coder/websocket"
 
+	"sandboxd/internal/sandbox"
 	"sandboxd/internal/wire"
 )
-
-// Dialer is what the tunnel needs of a driver: one TCP connection inside a container, for
-// the preview proxy. The container half of the driver is declared next to the manager.
-type Dialer interface {
-	Dial(ctx context.Context, id string, port int) (net.Conn, error)
-}
 
 const (
 	heartbeatInterval = 10 * time.Second
@@ -31,17 +26,18 @@ const (
 // The connection-scoped state is a `session`; a `portStream` is one proxied connection.
 type Tunnel struct {
 	cfg    Config
-	mgr    *Manager
-	dialer Dialer
-	events <-chan Event
+	mgr    *sandbox.Manager
+	events <-chan sandbox.Event
 	log    *slog.Logger
 
 	mu  sync.Mutex
 	cur *session
 }
 
-func NewTunnel(cfg Config, mgr *Manager, dialer Dialer, events <-chan Event, log *slog.Logger) *Tunnel {
-	return &Tunnel{cfg: cfg, mgr: mgr, dialer: dialer, events: events, log: log}
+// NewTunnel is the remote face of a manager: what the manager reports, the tunnel says
+// on the wire, and capacity is read from the manager rather than from the config.
+func NewTunnel(cfg Config, mgr *sandbox.Manager, events <-chan sandbox.Event, log *slog.Logger) *Tunnel {
+	return &Tunnel{cfg: cfg, mgr: mgr, events: events, log: log}
 }
 
 // Run dials the control plane and keeps dialling, with backoff, until the context ends.
@@ -108,12 +104,12 @@ func (t *Tunnel) serve(ctx context.Context, conn *websocket.Conn) {
 
 	go t.write(ctx, s)
 
-	running := t.mgr.Running()
+	_, max := t.mgr.Capacity()
 	t.send(s, &wire.Hello{
 		Name:         t.cfg.Name,
 		Fingerprint:  t.cfg.Fingerprint,
-		Running:      running,
-		MaxSandboxes: t.cfg.MaxSandboxes,
+		Running:      t.mgr.Running(),
+		MaxSandboxes: max,
 		Tags:         t.cfg.Tags,
 		JoinToken:    t.cfg.JoinToken,
 	})
@@ -247,7 +243,7 @@ func (t *Tunnel) openPTY(s *session, m *wire.PtyOpen) {
 	go t.pumpViewer(s, m.Stream, v)
 }
 
-func (t *Tunnel) pumpViewer(s *session, id uint32, v *Viewer) {
+func (t *Tunnel) pumpViewer(s *session, id uint32, v *sandbox.Viewer) {
 	for b := range v.Bytes() {
 		t.sendBinary(s, id, b)
 	}
@@ -266,19 +262,14 @@ func (t *Tunnel) openPort(ctx context.Context, s *session, m *wire.PortDial) {
 	// Registered before the dial, so a `port.close` that overtakes it still lands.
 	s.add(m.Stream, &stream{sid: m.SID, port: ps})
 
-	container, ok := t.mgr.ContainerOf(m.SID)
-	if !ok {
-		s.take(m.Stream)
-		ps.close()
-		t.send(s, &wire.PortError{Stream: m.Stream, Msg: "no such sandbox"})
-		return
-	}
-
-	conn, err := t.dialer.Dial(ctx, container, m.Port)
+	conn, err := t.mgr.Dial(ctx, m.SID, m.Port)
 	if err != nil {
 		s.take(m.Stream)
+		// Read before close, which cancels the context: a dial the control plane gave up
+		// on needs no answer, a failed one does.
+		abandoned := ctx.Err() != nil
 		ps.close()
-		if ctx.Err() == nil {
+		if !abandoned {
 			t.send(s, &wire.PortError{Stream: m.Stream, Msg: err.Error()})
 		}
 		return
@@ -320,7 +311,8 @@ func (t *Tunnel) heartbeat(ctx context.Context, s *session) {
 	for {
 		select {
 		case <-tick.C:
-			t.send(s, &wire.Heartbeat{Running: t.mgr.Count(), Max: t.cfg.MaxSandboxes})
+			running, max := t.mgr.Capacity()
+			t.send(s, &wire.Heartbeat{Running: running, Max: max})
 		case <-s.done:
 			return
 		case <-ctx.Done():
@@ -340,9 +332,9 @@ func (t *Tunnel) forwardEvents(ctx context.Context) {
 				continue
 			}
 			switch ev.Kind {
-			case Started:
+			case sandbox.Started:
 				t.send(s, &wire.SandboxStarted{SID: ev.SID})
-			case Ended:
+			case sandbox.Ended:
 				t.send(s, &wire.SandboxEnded{SID: ev.SID, Reason: ev.Reason, Detail: ev.Detail})
 			}
 		case <-ctx.Done():

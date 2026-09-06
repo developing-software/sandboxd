@@ -54,7 +54,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = st.Close() })
 
 	cfg := cp.Config{
-		ServiceToken:  serviceToken,
+		Auth:          cp.Auth{ServiceToken: serviceToken},
 		PublicURL:     "https://cp.example.com",
 		PreviewDomain: "preview.example.com",
 	}
@@ -68,7 +68,7 @@ func newHarness(t *testing.T) *harness {
 
 	svc := cp.NewSandboxes(cfg, st, hub, sched, tokens)
 	handler, err := New(Deps{
-		ServiceToken: cfg.ServiceToken,
+		ServiceToken: cfg.Auth.ServiceToken,
 		Tokens:       tokens,
 		Sandboxes:    svc,
 		Hosts:        hosts.NewService(st, hub, log),

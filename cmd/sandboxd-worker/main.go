@@ -4,15 +4,19 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"sandboxd/internal/conf"
+	"sandboxd/internal/sandbox"
+	"sandboxd/internal/sandbox/docker"
 	"sandboxd/internal/wire"
 	"sandboxd/internal/worker"
-	"sandboxd/internal/worker/driver"
 )
 
 // How long shutdown waits for every sandbox to be reported lost before the socket goes.
@@ -31,12 +35,29 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	cfg, err := worker.LoadConfig(os.Getenv)
+	configPath := flag.String("config", "", "path of worker.yaml (default: $SANDBOXD_CONFIG, then "+worker.DefaultPath+")")
+	check := flag.Bool("check-config", false, "load and validate the configuration, print it with secrets redacted, and exit")
+	flag.Parse()
+
+	path, err := conf.Locate(*configPath, os.LookupEnv, worker.DefaultPath)
 	if err != nil {
 		return err
 	}
+	cfg, err := worker.Load(path, os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	if *check {
+		return checkConfig(path, cfg)
+	}
+	if path == "" && os.Getenv("SANDBOXD_WORKER_CONFIG") != "" {
+		log.Warn("SANDBOXD_WORKER_CONFIG is now SANDBOXD_WORKER_IDENTITY; the old name still works this release")
+	}
+	if err := cfg.LoadIdentity(); err != nil {
+		return err
+	}
 
-	drv, err := driver.NewDocker(cfg.DockerSock, cfg.Fingerprint, log)
+	drv, err := docker.New(*cfg.Driver.Docker, cfg.Fingerprint, log)
 	if err != nil {
 		return err
 	}
@@ -47,9 +68,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	daemon, closeDaemon := context.WithCancel(context.Background())
 	defer closeDaemon()
 
-	events := make(chan worker.Event, 64)
-	mgr := worker.NewManager(daemon, drv, cfg.Entry, events, log)
-	tunnel := worker.NewTunnel(cfg, mgr, drv, events, log)
+	events := make(chan sandbox.Event, 64)
+	mgr := sandbox.NewManager(daemon, drv, cfg.Driver.Docker.EntryCommand(), cfg.Driver.Docker.MaxSandboxes, events, log)
+	tunnel := worker.NewTunnel(cfg, mgr, events, log)
 
 	// A sandbox from a previous run cannot be re-attached: its PTY and ring died with
 	// that process, so the container goes.
@@ -58,9 +79,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	log.Info("starting",
+		"config", source(path),
 		"name", cfg.Name,
 		"cp", cfg.URL,
-		"max_sandboxes", cfg.MaxSandboxes,
+		"driver", cfg.Driver.Name(),
+		"max_sandboxes", cfg.Driver.Docker.MaxSandboxes,
 		"tags", cfg.Tags,
 		"fingerprint", cfg.Fingerprint[:12],
 	)
@@ -76,4 +99,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	mgr.EndAll(grace, wire.EndLost)
 	tunnel.Flush(grace)
 	return nil
+}
+
+// checkConfig is `--check-config`: the source used, what the file made the environment
+// irrelevant to, and the effective configuration with secrets redacted.
+func checkConfig(path string, cfg worker.Config) error {
+	fmt.Println("# source:", source(path))
+	if ignored := conf.Ignored(os.Environ()); path != "" && len(ignored) > 0 {
+		fmt.Println("# ignored (a config file is in use; only ${VAR} reads the environment):", ignored)
+	}
+	return conf.Print(os.Stdout, cfg.Redacted())
+}
+
+func source(path string) string {
+	if path == "" {
+		return "environment (no config file found)"
+	}
+	return path
 }

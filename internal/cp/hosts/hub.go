@@ -273,13 +273,18 @@ func (h *Hub) DestroySandbox(hostID, sid string) {
 	}
 }
 
-// OpenPTY attaches a viewer to a sandbox's terminal.
-func (h *Hub) OpenPTY(hostID, sid string, size wire.Size) (*Stream, error) {
+// OpenPTY attaches a viewer to a sandbox's terminal. Spelled out rather than returned
+// straight through, for the same reason as Dial: a nil *Stream in an interface is not nil.
+func (h *Hub) OpenPTY(hostID, sid string, size wire.Size) (cp.PTY, error) {
 	c := h.conn(hostID)
 	if c == nil {
 		return nil, errHostGone
 	}
-	return c.openPTY(sid, size)
+	s, err := c.openPTY(sid, size)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // Dial opens a TCP connection to a port inside a sandbox. The returned net.Conn is what

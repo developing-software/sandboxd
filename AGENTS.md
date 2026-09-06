@@ -17,15 +17,20 @@ nothing from here but that SDK.
 | ----------------------- | --------------------------------------------------------------------------------- |
 | `api`                   | `client.yaml` and `admin.yaml`, hand-written. The source both generators read.     |
 | `internal/wire`         | The wire contract: messages, framing, ids. A leaf.                                |
+| `internal/conf`         | The config file loader: strict YAML, `${VAR}`, `_file` twins. A leaf.             |
 | `internal/gen`          | Generated, never edited, a leaf: `clientapi` from `api/client.yaml`, `adminapi` from `api/admin.yaml`, both ogen |
+| `internal/sandbox`      | `Driver`, `PTY`, the `Manager` with its fanout and ring, `Tags`. Imports `wire` only; both daemons import it |
+| `internal/sandbox/docker` | The Docker driver (moby client) and its `Config`, one block in either daemon's file |
+| `internal/sandbox/sandboxtest` | The fake driver every manager owner tests against                           |
 | `internal/cp`           | The control plane: config, tokens, scheduler and its placement policy, sandbox use cases |
 | `internal/cp/store`     | SQLite. The only package that speaks SQL.                                         |
-| `internal/cp/hosts`     | Worker tunnels: enrollment, the hub, and a stream that is a `net.Conn`            |
+| `internal/cp/hosts`     | The `workers` provider: enrollment, the hub, and a stream that is a `net.Conn`    |
+| `internal/cp/local`     | A provider in-process: one `sandbox.Manager` over any driver, shown as one host   |
+| `internal/cp/fleet`     | Routes a host id to whichever provider owns it, behind `cp`'s interfaces          |
 | `internal/cp/attach`    | Browser terminal ↔ PTY, behind its own `PTY` interface                            |
 | `internal/cp/preview`   | `<port>-<sid>.<domain>` → a port inside a sandbox, over `httputil.ReverseProxy`   |
 | `internal/cp/server`    | The two generated `Handler`s, the bearer check, and the only place a status lives  |
-| `internal/worker`       | The per-host daemon: manager, fanout and ring, one outbound tunnel (`tunnel`, `session`, `port`) |
-| `internal/worker/driver`| Docker today (moby client); Kubernetes next                                       |
+| `internal/worker`       | The per-host daemon: config, one outbound tunnel (`tunnel`, `session`, `port`) — the remote face of a `sandbox.Manager` |
 | `cmd/sandboxd-api`      | Wiring only, one binary                                                           |
 | `cmd/sandboxd-worker`   | Wiring only, one binary                                                           |
 | `scripts/dev`           | `go run ./scripts/dev` — the whole stack in one terminal. Not shipped.            |
@@ -36,11 +41,21 @@ nothing from here but that SDK.
 | `images/agent/agents`   | One `.sh` per coding agent, discovered by the entry. Its `README.md` is the contract. |
 
 `cp` and `worker` only meet on the wire: both import `wire`, neither imports the other,
-and `wire` imports nothing of ours. `cp` never imports its own subpackages — it declares
-the interfaces it needs and `cmd/sandboxd-api` supplies them, and it consumes the
-generated request and response types directly, which is why `internal/gen` is a leaf
-beside `wire` rather than a package under `cp/server`. Declared in `.golangci.yml` as
-`depguard` rules, enforced by `golangci-lint`.
+and `wire` imports nothing of ours. `sandbox` is shared code, not a channel between them:
+it imports `wire` only, and `depguard` denies it both daemons. `conf` is a leaf. `cp` never
+imports its own subpackages — it declares the interfaces it needs and `cmd/sandboxd-api`
+supplies them, and it consumes the generated request and response types directly, which is
+why `internal/gen` is a leaf beside `wire` rather than a package under `cp/server`.
+`fleet` is denied `hosts` and `local`, which plug into it, and `local` is denied `hosts`.
+Declared in `.golangci.yml` as `depguard` rules, enforced by `golangci-lint`.
+
+Each daemon reads one YAML file — `--config`, `SANDBOXD_CONFIG`, then
+`/etc/sandboxd/{api,worker}.yaml` — and falls back to the legacy `SANDBOXD_*` variables
+when none exists (ADR 28). `--check-config` prints the effective configuration, redacted.
+A **driver** is what runs a sandbox (`sandbox/docker`); a **provider** is where the manager
+runs: behind the tunnel (`providers.workers`, `cp/hosts`) or in-process
+(`providers.docker`, `cp/local` over that driver). Callers select with tags —
+`provider:workers`, `provider:local` — and the API does not change (ADR 30).
 
 ## Commands
 
@@ -57,8 +72,8 @@ beside `wire` rather than a package under `cp/server`. Declared in `.golangci.ym
 | `go run ./cmd/sandboxd-worker` | A worker on this machine [DO NOT RUN unless the user asks]      |
 | `nix build .#api` / `.#worker` | One static binary each; `--system aarch64-linux` cross-compiles |
 
-The live Docker check is env-guarded and needs an Engine:
-`SANDBOXD_DOCKER_TEST=1 go test ./internal/worker/driver/`.
+The live Docker checks are env-guarded and need an Engine:
+`SANDBOXD_DOCKER_TEST=1 go test ./internal/sandbox/docker/ ./internal/cp/local/`.
 
 Neither toolchain is on `PATH` outside the devShell: `nix develop --command <cmd>`, or
 `direnv allow` once. `.zed/` points Zed at the same devShell.

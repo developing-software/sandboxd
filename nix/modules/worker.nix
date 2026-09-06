@@ -78,7 +78,7 @@ in
       environment = {
         SANDBOXD_URL = cfg.url;
         SANDBOXD_WORKER_MAX_SESSIONS = toString cfg.maxSessions;
-        SANDBOXD_WORKER_CONFIG = "/var/lib/sandboxd-worker/host.json";
+        SANDBOXD_WORKER_IDENTITY = "/var/lib/sandboxd-worker/host.json";
         SANDBOXD_WORKER_ENTRY = builtins.toJSON cfg.entry;
         DOCKER_SOCK = "/var/run/docker.sock";
       }

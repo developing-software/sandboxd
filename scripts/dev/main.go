@@ -62,7 +62,7 @@ func run() error {
 	setDefault(&env, "SANDBOXD_DB", filepath.Join(root, ".data", "cp.db"))
 	setDefault(&env, "SANDBOXD_API_URL", fmt.Sprintf("http://localhost:%d", apiPort))
 	setDefault(&env, "SANDBOXD_URL", fmt.Sprintf("ws://localhost:%d", apiPort))
-	setDefault(&env, "SANDBOXD_WORKER_CONFIG", filepath.Join(root, ".data", "host.json"))
+	setDefault(&env, "SANDBOXD_WORKER_IDENTITY", filepath.Join(root, ".data", "host.json"))
 	setDefault(&env, "SANDBOXD_LLM_BASE_URL", "https://llm.developing.company")
 	// The control plane refuses to boot without a service token. Both sides get the same
 	// one here, so local dev works and production still has to say what its token is.

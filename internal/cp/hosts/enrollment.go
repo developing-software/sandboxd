@@ -3,6 +3,7 @@ package hosts
 import (
 	"crypto/subtle"
 	"fmt"
+	"slices"
 
 	"sandboxd/internal/cp/store"
 	"sandboxd/internal/wire"
@@ -42,8 +43,17 @@ type enrollStore interface {
 	TouchHost(id string, p store.HostPatch) error
 }
 
+// ProviderTag is what every host behind the tunnel carries, added here rather than by the
+// worker: which provider a host belongs to is the control plane's fact, and a sandbox
+// selects one with `tags: [provider:workers]` the way it selects anything else.
+const ProviderTag = "provider:workers"
+
 func enroll(s enrollStore, hello *wire.Hello, joinToken string) (enrollment, error) {
 	joined := tokenMatches(joinToken, hello.JoinToken)
+	tags := hello.Tags
+	if !slices.Contains(tags, ProviderTag) {
+		tags = slices.Sorted(slices.Values(append(slices.Clone(tags), ProviderTag)))
+	}
 
 	host, found, err := s.HostByFingerprint(hello.Fingerprint)
 	if err != nil {
@@ -58,7 +68,7 @@ func enroll(s enrollStore, hello *wire.Hello, joinToken string) (enrollment, err
 			Status:       store.HostPending,
 			ApproveCode:  wire.NewCode(),
 			MaxSandboxes: hello.MaxSandboxes,
-			Tags:         hello.Tags,
+			Tags:         tags,
 		}
 		if err := s.InsertPendingHost(host); err != nil {
 			return enrollment{}, err
@@ -66,11 +76,11 @@ func enroll(s enrollStore, hello *wire.Hello, joinToken string) (enrollment, err
 	}
 	// The tags and the capacity are refreshed on every hello, so GET /hosts and the
 	// unsatisfiable-tags check see what this worker reports today.
-	patch := store.HostPatch{Name: &hello.Name, MaxSandboxes: &hello.MaxSandboxes, Tags: hello.Tags}
+	patch := store.HostPatch{Name: &hello.Name, MaxSandboxes: &hello.MaxSandboxes, Tags: tags}
 	if err := s.TouchHost(host.ID, patch); err != nil {
 		return enrollment{}, err
 	}
-	host.Name, host.MaxSandboxes, host.Tags = hello.Name, hello.MaxSandboxes, hello.Tags
+	host.Name, host.MaxSandboxes, host.Tags = hello.Name, hello.MaxSandboxes, tags
 
 	switch {
 	case host.Status == store.HostRevoked:

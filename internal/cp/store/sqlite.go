@@ -147,6 +147,32 @@ func (s *SQLite) InsertPendingHost(h Host) error {
 	return nil
 }
 
+// UpsertProviderHost is a host that lives inside the control plane: approved at every
+// boot, its identity the fingerprint, its id kept across restarts so placed rows still
+// point at it. Revoking one holds until the next boot re-approves it.
+func (s *SQLite) UpsertProviderHost(h Host) (Host, error) {
+	tags, err := encodeStrings(h.Tags)
+	if err != nil {
+		return Host{}, err
+	}
+	t := now()
+	var id string
+	err = s.db.QueryRow(
+		`INSERT INTO hosts (id,name,fingerprint,status,approve_code,max_sandboxes,tags,last_seen_at,created_at)
+		 VALUES (?,?,?,'approved',NULL,?,?,?,?)
+		 ON CONFLICT(fingerprint) DO UPDATE SET name=excluded.name, status='approved',
+		   approve_code=NULL, max_sandboxes=excluded.max_sandboxes, tags=excluded.tags,
+		   last_seen_at=excluded.last_seen_at
+		 RETURNING id`,
+		wire.NewHostID(), h.Name, h.Fingerprint, h.MaxSandboxes, tags, t, t,
+	).Scan(&id)
+	if err != nil {
+		return Host{}, fmt.Errorf("store: upsert provider host: %w", err)
+	}
+	out, _, err := s.Host(id)
+	return out, err
+}
+
 func (s *SQLite) ApproveHost(id string) error {
 	return s.exec(`UPDATE hosts SET status='approved', approve_code=NULL WHERE id=?`, id)
 }

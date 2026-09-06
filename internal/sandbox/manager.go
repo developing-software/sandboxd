@@ -1,4 +1,4 @@
-package worker
+package sandbox
 
 import (
 	"context"
@@ -6,24 +6,16 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"slices"
 	"sync"
 	"time"
 
 	"sandboxd/internal/wire"
-	"sandboxd/internal/worker/driver"
 )
 
-// Driver is what the manager needs of a driver: the container half. The preview dial is
-// declared separately, next to the tunnel that uses it.
-type Driver interface {
-	Create(ctx context.Context, sid, image string) (string, error)
-	Attach(ctx context.Context, id string, cmd []string, env map[string]string, size wire.Size) (driver.PTY, error)
-	Destroy(ctx context.Context, id string) error
-	ListManaged(ctx context.Context) ([]driver.Managed, error)
-}
-
-// EventKind is what happened to a sandbox. The tunnel turns each into one wire message.
+// EventKind is what happened to a sandbox. The manager's owner turns each into what the
+// control plane hears: the tunnel into a wire message, a provider into a scheduler event.
 type EventKind int
 
 const (
@@ -38,7 +30,7 @@ type Event struct {
 	Detail string
 }
 
-var ErrNoSandbox = errors.New("worker: no such sandbox")
+var ErrNoSandbox = errors.New("sandbox: no such sandbox")
 
 const (
 	reapInterval = 15 * time.Second
@@ -55,6 +47,7 @@ type Manager struct {
 	ctx    context.Context
 	drv    Driver
 	entry  []string
+	max    int
 	events chan<- Event
 	log    *slog.Logger
 
@@ -66,7 +59,7 @@ type sandbox struct {
 	spec      wire.Spec
 	idle      time.Duration // fixed at create, so the reaper needs no lock for it
 	container string
-	pty       driver.PTY
+	pty       PTY
 	fan       *Fanout
 	in        chan []byte
 	done      chan struct{}
@@ -79,12 +72,17 @@ type sandbox struct {
 
 // NewManager takes the daemon's context because a sandbox outlives any one request: the
 // PTY pump, the input feed and the idle reaper all end with it, and so does the delivery
-// of an event to a tunnel that has stopped reading.
-func NewManager(ctx context.Context, drv Driver, entry []string, events chan<- Event, log *slog.Logger) *Manager {
+// of an event to an owner that has stopped reading. entry is the command exec'd when a
+// spec names none; max is the capacity this host reports, held here because how many
+// sandboxes a runtime can hold is a fact about the runtime, not about what surrounds it.
+func NewManager(
+	ctx context.Context, drv Driver, entry []string, max int, events chan<- Event, log *slog.Logger,
+) *Manager {
 	return &Manager{
 		ctx:    ctx,
 		drv:    drv,
 		entry:  entry,
+		max:    max,
 		events: events,
 		log:    log,
 		boxes:  map[string]*sandbox{},
@@ -308,7 +306,7 @@ func (m *Manager) EndAll(ctx context.Context, reason wire.EndReason) {
 func (m *Manager) Sweep(ctx context.Context) error {
 	managed, err := m.drv.ListManaged(ctx)
 	if err != nil {
-		return fmt.Errorf("worker: sweep: %w", err)
+		return fmt.Errorf("sandbox: sweep: %w", err)
 	}
 	for _, c := range managed {
 		m.log.Warn("removing orphaned container from a previous run", "sid", c.SID, "container", short(c.ID))
@@ -331,14 +329,20 @@ func (m *Manager) Count() int {
 	return len(m.boxes)
 }
 
-// ContainerOf is where the preview dial starts: a port is dialled inside a container, and
-// only a running sandbox has one.
-func (m *Manager) ContainerOf(sid string) (string, bool) {
+// Capacity is what the host reports upward. The worker's hello and heartbeat and an
+// embedded provider's answer to the scheduler all read it from here.
+func (m *Manager) Capacity() (running, max int) {
+	return m.Count(), m.max
+}
+
+// Dial opens a TCP connection to a port inside a sandbox, for the preview proxy. Only a
+// running sandbox has a container to dial into.
+func (m *Manager) Dial(ctx context.Context, sid string, port int) (net.Conn, error) {
 	box, err := m.ready(sid)
 	if err != nil {
-		return "", false
+		return nil, err
 	}
-	return box.container, true
+	return m.drv.Dial(ctx, box.container, port)
 }
 
 func (m *Manager) reapIdle(ctx context.Context) {
