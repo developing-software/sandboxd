@@ -3,10 +3,12 @@ package driver
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net"
 	"net/netip"
 	"slices"
+	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -29,17 +31,18 @@ type Docker struct {
 	// owner scopes create, list and sweep to this worker's identity, so several workers
 	// sharing one Engine never reclaim each other's containers.
 	owner string
+	log   *slog.Logger
 }
 
 // NewDocker connects to the Engine on a unix socket path (DOCKER_SOCK).
-func NewDocker(sock, owner string) (*Docker, error) {
+func NewDocker(sock, owner string, log *slog.Logger) (*Docker, error) {
 	// Version negotiation is on by default in this client, so an older Engine on a host
 	// still works without asking for it.
 	cli, err := client.New(client.WithHost("unix://" + sock))
 	if err != nil {
 		return nil, fmt.Errorf("docker: connect %s: %w", sock, err)
 	}
-	return &Docker{cli: cli, owner: owner}, nil
+	return &Docker{cli: cli, owner: owner, log: log}, nil
 }
 
 func (d *Docker) Close() error { return d.cli.Close() }
@@ -62,6 +65,8 @@ func (d *Docker) Create(ctx context.Context, sid, img string) (string, error) {
 		Name: "sandboxd-" + sid,
 	}
 
+	d.refresh(ctx, img)
+
 	res, err := d.cli.ContainerCreate(ctx, opts)
 	if cerrdefs.IsNotFound(err) {
 		if err := d.pull(ctx, img); err != nil {
@@ -79,6 +84,44 @@ func (d *Docker) Create(ctx context.Context, sid, img string) (string, error) {
 		return "", fmt.Errorf("docker: start %s: %w", sid, err)
 	}
 	return res.ID, nil
+}
+
+// refresh re-pulls a reference that someone else can move under us. Create below misses
+// only when nothing is cached at all, so without this a host runs the copy it pulled first
+// for as long as it lives — a republished `:latest` reaching nobody.
+func (d *Docker) refresh(ctx context.Context, img string) {
+	if !movesUnderUs(img) || d.builtHere(ctx, img) {
+		return
+	}
+	// Not fatal on its own: a cached copy still runs, and where there is none the create
+	// below misses and its own pull reports the real failure.
+	if err := d.pull(ctx, img); err != nil {
+		d.log.Warn("image refresh failed, running whatever is cached", "image", img, "err", err)
+	}
+}
+
+// Which references get refreshed. This is Kubernetes' imagePullPolicy default and for its
+// reason: `latest` is the tag everyone republishes, while re-pulling every tag would cost
+// `ubuntu:24.04` a registry round trip — and a Docker Hub rate limit — per sandbox.
+func movesUnderUs(img string) bool {
+	if strings.Contains(img, "@") {
+		return false // pinned to a digest, which cannot mean anything else later
+	}
+	// Only the last path element can carry the tag: a registry host may have a port, as
+	// in localhost:5000/app.
+	_, tag, tagged := strings.Cut(img[strings.LastIndex(img, "/")+1:], ":")
+	return !tagged || tag == "" || tag == "latest"
+}
+
+// builtHere reports an image this Engine built and never got from a registry, which has no
+// repo digest. images/README.md documents building under the published tag to try an entry
+// script without pushing one, and a refresh would silently pull that work away.
+func (d *Docker) builtHere(ctx context.Context, img string) bool {
+	res, err := d.cli.ImageInspect(ctx, img)
+	if err != nil {
+		return false // absent, most likely, and the pull is needed either way
+	}
+	return len(res.RepoDigests) == 0
 }
 
 func (d *Docker) pull(ctx context.Context, img string) error {

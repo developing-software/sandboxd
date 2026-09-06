@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"slices"
@@ -31,12 +32,32 @@ func liveDocker(t *testing.T) *Docker {
 		sock = "/var/run/docker.sock"
 	}
 	// A distinct owner, so this never touches a real worker's containers on the machine.
-	d, err := NewDocker(sock, "go-test-"+wire.RandomID(4))
+	d, err := NewDocker(sock, "go-test-"+wire.RandomID(4), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d
+}
+
+// Which references cost a registry round trip on every create, and which are read straight
+// from the cache. No Engine needed: this is the whole refresh decision.
+func TestMovesUnderUs(t *testing.T) {
+	for img, want := range map[string]bool{
+		"ghcr.io/developing-software/sandboxd-agent:latest": true,
+		"ghcr.io/developing-software/sandboxd-agent":        true,
+		"alpine":             true,
+		"localhost:5000/app": true, // a port is not a tag
+		"ghcr.io/developing-software/sandboxd-agent:sha-abc": false,
+		"ubuntu:24.04":          false,
+		"localhost:5000/app:v1": false,
+		"ghcr.io/developing-software/sandboxd-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000": false,
+		"alpine:latest@sha256:0000000000000000000000000000000000000000000000000000000000000000":                              false,
+	} {
+		if got := movesUnderUs(img); got != want {
+			t.Errorf("movesUnderUs(%q) = %v, want %v", img, got, want)
+		}
+	}
 }
 
 func TestDockerRunsASandbox(t *testing.T) {

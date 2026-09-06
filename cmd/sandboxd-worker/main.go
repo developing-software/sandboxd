@@ -36,7 +36,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	drv, err := driver.NewDocker(cfg.DockerSock, cfg.Fingerprint)
+	drv, err := driver.NewDocker(cfg.DockerSock, cfg.Fingerprint, log)
 	if err != nil {
 		return err
 	}
