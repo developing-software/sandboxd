@@ -1,0 +1,4 @@
+# python: the official image, no Dockerfile. A REPL by default; send `cmd` for a script.
+description: a Python REPL on the official image
+image: python:3.12-slim
+cmd: [python3]

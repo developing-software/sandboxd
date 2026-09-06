@@ -1,0 +1,4 @@
+# node: the official image, no Dockerfile. A REPL by default; send `cmd` for a script.
+description: a Node.js REPL on the official image
+image: node:22-slim
+cmd: [node]

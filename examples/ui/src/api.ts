@@ -1,28 +1,27 @@
-// The UI server: the page, the preset listing, and POST /sandboxes, which resolves a
-// preset before calling the API. Everything else is forwarded to the API with the
-// service token added — the browser never holds it.
+// The JSON half of the UI, under /api. GET /api/presets and POST /api/sandboxes are this
+// app's own: the latter resolves a preset, then calls the control plane with the SDK.
+// Everything else is forwarded byte for byte with the service token added, which is why
+// the browser talks to this app and never to the API directly.
 import { createSandbox, createSandboxd } from '@sandboxd/sdk'
 import { Hono } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
+import type { UiConfig } from './config'
 import { Err } from './errors'
 import { Log } from './log'
-import type { UiConfig } from './config'
 import type { PresetRegistry } from './presets/index'
 import { buildCreate } from './sandboxes'
 
 const log = Log.create('ui')
 
-export interface AppDeps {
+export interface ApiDeps {
   cfg: Pick<UiConfig, 'apiUrl' | 'serviceToken' | 'defaultImage'>
   presets: PresetRegistry
-  html: () => Promise<string>
   /** Injected by tests. */
   fetch?: typeof fetch
 }
 
-export function createApp(d: AppDeps) {
+export function createApi(d: ApiDeps) {
   const call = d.fetch ?? fetch
-  const authorization = `Bearer ${d.cfg.serviceToken}`
   // The one call this app makes as a client rather than a proxy, so it makes it with the
   // generated SDK. Everything else is bytes it has no opinion about.
   const api = createSandboxd({
@@ -38,7 +37,7 @@ export function createApp(d: AppDeps) {
   }
 
   return new Hono({ strict: false })
-    .get('/', async (c) => c.html(await d.html()))
+    .basePath('/api')
     .get('/presets', (c) => c.json(d.presets.list()))
     .post('/sandboxes', async (c) => {
       const raw: unknown = await c.req.json().catch(() => {
@@ -51,8 +50,11 @@ export function createApp(d: AppDeps) {
       return c.json((data ?? error) as object, response.status as ContentfulStatusCode)
     })
     .all('/*', async (c) => {
-      const url = new URL(c.req.path + new URL(c.req.url).search, d.cfg.apiUrl)
-      const headers: Record<string, string> = { authorization }
+      const path = c.req.path.slice('/api'.length) + new URL(c.req.url).search
+      const url = new URL(path, d.cfg.apiUrl)
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${d.cfg.serviceToken}`,
+      }
       const type = c.req.header('content-type')
       if (type) headers['content-type'] = type
       const raw =

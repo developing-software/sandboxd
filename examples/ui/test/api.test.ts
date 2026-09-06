@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
+import { createApi } from '../src/api'
 import { PresetRegistry, loadPresetDir } from '../src/presets/index'
-import { createApp } from '../src/app'
 
 const loaded = loadPresetDir(resolve(import.meta.dir, '../presets'))
 
@@ -19,26 +19,34 @@ function setup() {
     })
     return Response.json({ id: 's_1', status: 'queued' }, { status: 201 })
   }
-  const app = createApp({
+  const app = createApi({
     cfg: { apiUrl: 'http://api.test', serviceToken: 'secret', defaultImage: null },
     presets: new PresetRegistry(loaded.presets),
-    html: async () => '<h1>ui</h1>',
     fetch: fetch as typeof globalThis.fetch,
   })
   return { app, calls }
 }
 
-test('the page and the presets are served here', async () => {
+test('the presets are served here, and nothing outside /api is', async () => {
   const { app, calls } = setup()
-  expect(await (await app.request('/')).text()).toBe('<h1>ui</h1>')
-  const presets = (await (await app.request('/presets')).json()) as { name: string }[]
-  expect(presets.map((p) => p.name)).toEqual(['coding-agent', 'custom', 'jupyter', 'vscode'])
+  const presets = (await (await app.request('/api/presets')).json()) as { name: string }[]
+  expect(presets.map((p) => p.name)).toEqual([
+    'coding-agent',
+    'custom',
+    'http',
+    'jupyter',
+    'node',
+    'python',
+    'ubuntu',
+    'vscode',
+  ])
+  expect((await app.request('/presets')).status).toBe(404)
   expect(calls).toEqual([])
 })
 
-test('POST /sandboxes resolves the preset, then calls the API with the token', async () => {
+test('POST /api/sandboxes resolves the preset, then calls the API with the token', async () => {
   const { app, calls } = setup()
-  const res = await app.request('/sandboxes', {
+  const res = await app.request('/api/sandboxes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ owner_id: 'me', repo: 'https://x/r.git' }),
@@ -57,7 +65,7 @@ test('POST /sandboxes resolves the preset, then calls the API with the token', a
       secret_env: {},
     },
   })
-  const bad = await app.request('/sandboxes', {
+  const bad = await app.request('/api/sandboxes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ owner_id: 'me', repo: 'r', agent: 'vim' }),
@@ -66,18 +74,18 @@ test('POST /sandboxes resolves the preset, then calls the API with the token', a
   expect(await bad.json()).toEqual({
     error: 'agent must be one of claude, codex, opencode, shell',
   })
-  expect((await app.request('/sandboxes', { method: 'POST', body: '{' })).status).toBe(400)
+  expect((await app.request('/api/sandboxes', { method: 'POST', body: '{' })).status).toBe(400)
 })
 
-test('everything else is forwarded to the API with the token added', async () => {
+test('everything else under /api is forwarded with the token added', async () => {
   const { app, calls } = setup()
-  await app.request('/sandboxes?owner_id=me')
-  await app.request('/sandboxes/s_1/attach-token', {
+  await app.request('/api/sandboxes?owner_id=me')
+  await app.request('/api/sandboxes/s_1/attach-token', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ owner_id: 'me' }),
   })
-  await app.request('/hosts/h1/revoke', { method: 'POST' })
+  await app.request('/api/hosts/h1/revoke', { method: 'POST' })
   expect(calls.map((c) => [c.method, c.url, c.auth, c.body])).toEqual([
     ['GET', 'http://api.test/sandboxes?owner_id=me', 'Bearer secret', null],
     [
@@ -91,18 +99,18 @@ test('everything else is forwarded to the API with the token added', async () =>
 })
 
 test('an unreachable API is a 502 that names it, not an internal error', async () => {
-  const app = createApp({
+  const app = createApi({
     cfg: { apiUrl: 'http://api.test', serviceToken: 'secret', defaultImage: null },
     presets: new PresetRegistry(loaded.presets),
-    html: async () => '',
-    fetch: (async () => {
-      throw new Error('Unable to connect. Is the computer able to access the url?')
-    }) as unknown as typeof globalThis.fetch,
+    fetch: (() =>
+      Promise.reject(
+        new Error('Unable to connect. Is the computer able to access the url?'),
+      )) as unknown as typeof globalThis.fetch,
   })
-  const list = await app.request('/sandboxes?owner_id=me')
+  const list = await app.request('/api/sandboxes?owner_id=me')
   expect(list.status).toBe(502)
   expect(await list.json()).toEqual({ error: 'api unreachable at http://api.test' })
-  const create = await app.request('/sandboxes', {
+  const create = await app.request('/api/sandboxes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ owner_id: 'me', image: 'i' }),

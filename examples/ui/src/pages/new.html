@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>new sandbox · sandboxd</title>
+<link rel="stylesheet" href="./style.css">
+<script type="module" src="./new.ts"></script>
+</head>
+<body>
+<main>
+  <h1>new sandbox</h1>
+  <p class="muted">A preset and its fields. The UI turns this into the image, command and env the API accepts.</p>
+  <form id="form">
+    <label for="preset">preset <span class="muted">(from GET /api/presets)</span></label>
+    <select id="preset"></select>
+    <div id="presetDesc" class="muted" style="font-size:11px;margin-top:3px"></div>
+    <!-- One input per preset field, rendered from its schema; see renderFields(). -->
+    <div id="fields"></div>
+
+    <details>
+      <summary>image &amp; command</summary>
+      <label for="image">image <span class="muted">(empty = the preset's image)</span></label>
+      <input id="image" placeholder="sandboxd-coding-agent:latest">
+      <label for="cmd">command <span class="muted">(empty = image default entry)</span></label>
+      <input id="cmd" placeholder="bash -l   or   [&quot;python3&quot;,&quot;-m&quot;,&quot;http.server&quot;]">
+      <label for="tags">host tags <span class="muted">(comma separated; only hosts carrying all of them qualify)</span></label>
+      <input id="tags" placeholder="driver:docker">
+    </details>
+    <details>
+      <summary>env</summary>
+      <label for="env">env <span class="muted">(KEY=value per line, stored)</span></label>
+      <textarea id="env" placeholder="NODE_ENV=development"></textarea>
+      <label for="secretEnv">secret env <span class="muted">(KEY=value per line, never stored)</span></label>
+      <textarea id="secretEnv" placeholder="MY_API_KEY=…"></textarea>
+    </details>
+
+    <div class="actions"><button id="create" class="primary">create sandbox</button></div>
+    <div id="createMsg" class="msg"></div>
+  </form>
+</main>
+</body>
+</html>

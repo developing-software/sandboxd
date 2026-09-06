@@ -1,0 +1,7 @@
+# http: the smallest preview demo — python's http.server on a stock image, no Dockerfile.
+# Idle defaults to 4 h because preview traffic does not count as activity (design decision 10).
+description: python http.server on the stock image, behind the preview proxy
+image: python:3.12-slim
+cmd: [python3, -m, http.server, "8000"]
+idle_timeout_s: 14400
+preview: { port: 8000 }

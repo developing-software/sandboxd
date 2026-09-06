@@ -1,0 +1,5 @@
+# ubuntu: a stock image, no Dockerfile — nothing to build, the worker pulls it. The shell
+# runs in the PTY; the command is the caller's to override.
+description: a bare Ubuntu shell on the stock image
+image: ubuntu:24.04
+cmd: [bash, -l]

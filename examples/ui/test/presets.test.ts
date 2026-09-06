@@ -27,7 +27,16 @@ test('config: presets dir defaults to this app, image default is opt-in', () => 
 })
 
 test('shipped presets: one folder each, one image each', () => {
-  expect(reg.names).toEqual(['coding-agent', 'custom', 'jupyter', 'vscode'])
+  expect(reg.names).toEqual([
+    'coding-agent',
+    'custom',
+    'http',
+    'jupyter',
+    'node',
+    'python',
+    'ubuntu',
+    'vscode',
+  ])
   expect(reg.list().map((p) => [p.name, p.image])).toEqual([
     ['coding-agent', 'sandboxd-coding-agent:latest'],
     ['custom', null],

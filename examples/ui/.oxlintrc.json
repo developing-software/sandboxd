@@ -23,7 +23,9 @@
     // name. Sequential awaits are the point, not an oversight.
     "no-await-in-loop": "off",
     // Flags test-local helpers that belong to the one test using them.
-    "unicorn/consistent-function-scoping": "off"
+    "unicorn/consistent-function-scoping": "off",
+    // A stylesheet is imported for its side effect: Bun bundles it with the page.
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }]
   },
   "overrides": [
     {

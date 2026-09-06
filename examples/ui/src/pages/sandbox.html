@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sandbox · sandboxd</title>
+<link rel="stylesheet" href="./style.css">
+<script type="module" src="./sandbox.ts"></script>
+</head>
+<body>
+<main class="wide">
+  <div id="bar">
+    <b id="id"></b>
+    <span id="status" class="pill">loading…</span>
+    <details>
+      <summary>details</summary>
+      <dl id="facts" class="card"></dl>
+    </details>
+    <span class="spacer"></span>
+    <label for="port" style="margin:0">port</label>
+    <input id="port" type="number">
+    <button id="preview">open preview</button>
+    <button id="end" class="danger">end sandbox</button>
+  </div>
+  <div id="term"></div>
+</main>
+</body>
+</html>

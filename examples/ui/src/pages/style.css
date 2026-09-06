@@ -1,0 +1,297 @@
+:root {
+  --bg: #0f1115;
+  --panel: #161a22;
+  --line: #262c38;
+  --text: #d7dce5;
+  --muted: #7c8594;
+  --accent: #6ea8fe;
+  --ok: #4cc38a;
+  --warn: #f5b53f;
+  --bad: #f06c6c;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font:
+    13px/1.45 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+
+/* nav: rendered by shell.ts on every page */
+nav {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+nav a.brand {
+  color: var(--accent);
+  font-size: 14px;
+}
+nav a.active {
+  color: var(--text);
+}
+nav label {
+  margin: 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+nav input {
+  width: 110px;
+}
+.spacer {
+  flex: 1;
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 14px 14px 40px;
+  overflow-y: auto;
+}
+main.wide {
+  max-width: none;
+  padding: 0;
+}
+
+h1 {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0 0 6px;
+  color: var(--accent);
+}
+h2 {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 18px 0 8px;
+}
+p {
+  margin: 0 0 12px;
+}
+a {
+  color: var(--accent);
+}
+code {
+  color: var(--text);
+}
+label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin: 8px 0 3px;
+}
+input,
+textarea,
+select {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+button {
+  font: inherit;
+  color: var(--text);
+  background: #232938;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  color: #0b0e14;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+button.danger:hover {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+details {
+  margin-top: 10px;
+}
+summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.row > * {
+  flex: 1;
+}
+.row > button {
+  flex: 0 0 auto;
+}
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 6px 0;
+}
+.check input {
+  width: auto;
+  margin: 0;
+}
+.check label {
+  margin: 0;
+  color: var(--text);
+}
+.actions {
+  margin-top: 10px;
+}
+.muted {
+  color: var(--muted);
+}
+.msg {
+  color: var(--bad);
+  white-space: pre-wrap;
+}
+.id {
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.card {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  background: var(--panel);
+}
+a.card:hover,
+.card.active {
+  border-color: var(--accent);
+}
+.card.pending {
+  border-color: var(--warn);
+}
+.pill {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.pill.on {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.pill.off {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.pill.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+/* the sandbox page: a toolbar, a collapsible fact sheet, and the terminal filling the rest */
+#bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+#bar input {
+  width: 80px;
+}
+#bar details {
+  margin: 0;
+}
+#facts {
+  position: absolute;
+  z-index: 1;
+  margin-top: 8px;
+  padding: 8px 10px;
+  min-width: 320px;
+  max-width: 640px;
+}
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+}
+dt {
+  color: var(--muted);
+}
+dd {
+  margin: 0;
+  word-break: break-all;
+}
+#term {
+  flex: 1;
+  min-height: 0;
+  background: #000;
+  padding: 6px;
+  overscroll-behavior: contain;
+}
+.xterm {
+  height: 100%;
+}
