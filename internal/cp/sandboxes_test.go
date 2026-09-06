@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
 	"sandboxd/internal/cp/store"
+	"sandboxd/internal/openapi"
 )
 
 // countingStore counts the queue scans a listing costs. It delegates every call to the
@@ -28,26 +30,37 @@ func service(h *harness) *Sandboxes {
 	return NewSandboxes(cfg, h.store, h.hub, h.sched, NewTokens("k"))
 }
 
+// env and secretEnv wrap a plain map in the optional the generated body declares. The
+// constraints the document states — a present `image`, a non-empty `cmd`, a port in range
+// — are checked by the generated decoder before a request reaches these use cases, so what
+// is exercised here is only what is left: the semantics.
+func env(m map[string]string) openapi.OptCreateSandboxEnv {
+	return openapi.NewOptCreateSandboxEnv(m)
+}
+
+func secretEnv(m map[string]string) openapi.OptCreateSandboxSecretEnv {
+	return openapi.NewOptCreateSandboxSecretEnv(m)
+}
+
 func TestCreateKeepsCallerEnvAndNeverStoresSecrets(t *testing.T) {
 	h := newHarness(t, nil)
 	svc := service(h)
 
-	v, err := svc.Create(h.ctx, CreateSandbox{
-		OwnerID:   "me",
+	v, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{
 		Image:     "  img:1  ",
-		Env:       map[string]string{"REPO": "https://x/r.git", "PROMPT": "p"},
-		SecretEnv: map[string]string{"GIT_TOKEN": "0-secret-0"},
+		Env:       env(map[string]string{"REPO": "https://x/r.git", "PROMPT": "p"}),
+		SecretEnv: secretEnv(map[string]string{"GIT_TOKEN": "0-secret-0"}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Status != "queued" || v.QueuePosition == nil || *v.QueuePosition != 1 {
+	if v.Status != openapi.SandboxViewStatusQueued || v.QueuePosition.Null || v.QueuePosition.Value != 1 {
 		t.Errorf("created = %+v", v)
 	}
 	if v.Image != "img:1" {
 		t.Errorf("image = %q, want it trimmed", v.Image)
 	}
-	if !maps.Equal(v.Env, map[string]string{"REPO": "https://x/r.git", "PROMPT": "p"}) {
+	if !maps.Equal(v.Env, openapi.SandboxViewEnv{"REPO": "https://x/r.git", "PROMPT": "p"}) {
 		t.Errorf("env = %v", v.Env)
 	}
 	if v.IdleTimeoutS != DefaultIdleS {
@@ -69,11 +82,11 @@ func TestCreateKeepsCallerEnvAndNeverStoresSecrets(t *testing.T) {
 func TestCreateRejectsBadEnv(t *testing.T) {
 	h := newHarness(t, nil)
 	svc := service(h)
-	for _, c := range []CreateSandbox{
-		{OwnerID: "me", Image: "i", Env: map[string]string{"TERM": "x"}},
-		{OwnerID: "me", Image: "i", SecretEnv: map[string]string{"bad-name": "x"}},
+	for _, c := range []*openapi.CreateSandbox{
+		{Image: "i", Env: env(map[string]string{"TERM": "x"})},
+		{Image: "i", SecretEnv: secretEnv(map[string]string{"bad-name": "x"})},
 	} {
-		_, err := svc.Create(h.ctx, c)
+		_, err := svc.Create(h.ctx, "me", c)
 		if !errors.Is(err, ErrInvalid) {
 			t.Errorf("err = %v, want ErrInvalid", err)
 		}
@@ -88,7 +101,7 @@ func TestCreateRejectsBadEnv(t *testing.T) {
 func TestOwnershipIsTheWholeModel(t *testing.T) {
 	h := newHarness(t, nil)
 	svc := service(h)
-	v, err := svc.Create(h.ctx, CreateSandbox{OwnerID: "me", Image: "i"})
+	v, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{Image: "i"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +113,8 @@ func TestOwnershipIsTheWholeModel(t *testing.T) {
 	if _, err := svc.Get(v.ID, "you"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("another owner got %v", err)
 	}
+	// The header is required by the document, so this cannot arrive over HTTP — the check
+	// is here because a use case that trusts the transport for ownership is a bug waiting.
 	if _, err := svc.Get(v.ID, ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("no owner got %v", err)
 	}
@@ -112,19 +127,19 @@ func TestOwnershipIsTheWholeModel(t *testing.T) {
 	}
 
 	ended, err := svc.Cancel(h.ctx, v.ID, "me")
-	if err != nil || ended.Status != "ended" {
+	if err != nil || ended.Status != openapi.SandboxViewStatusEnded {
 		t.Errorf("cancel = %+v, %v", ended, err)
 	}
 }
 
-func TestAttachTokenNeedsARunningSandbox(t *testing.T) {
+func TestATerminalNeedsARunningSandbox(t *testing.T) {
 	h := newHarness(t, nil)
 	svc := service(h)
-	v, err := svc.Create(h.ctx, CreateSandbox{OwnerID: "me", Image: "i"})
+	v, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{Image: "i"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AttachToken(v.ID, "me"); !errors.Is(err, ErrConflict) {
+	if _, err := svc.Terminal(v.ID, "me"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("a queued sandbox has no terminal yet: %v", err)
 	}
 
@@ -133,43 +148,60 @@ func TestAttachTokenNeedsARunningSandbox(t *testing.T) {
 	h.emit(Heartbeat{HostID: "h1"})
 	h.emit(SandboxStarted{SID: v.ID})
 
-	got, err := svc.AttachToken(v.ID, "me")
+	got, err := svc.Terminal(v.ID, "me")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got.WssURL, "wss://cp.example.com/attach?token=") {
-		t.Errorf("wss_url = %q", got.WssURL)
+	// The link is the socket's own address with the credential already in it: the caller's
+	// only move is to hand it to a browser (decision 26).
+	want := "wss://cp.example.com/sandboxes/" + v.ID + "/terminal?token="
+	if !strings.HasPrefix(got.URL, want) {
+		t.Errorf("url = %q, want it to start %q", got.URL, want)
 	}
 	if got.ExpiresInS != 60 {
 		t.Errorf("expires_in_s = %d", got.ExpiresInS)
 	}
+	if _, ok := NewTokens("k").Verify(tokenIn(t, got.URL, "token"), TokenAttach); !ok {
+		t.Error("the token in the url does not verify")
+	}
 }
 
-func TestPreviewTokenURL(t *testing.T) {
+func TestPreviewURLCarriesItsOwnToken(t *testing.T) {
 	h := newHarness(t, nil)
 	svc := service(h)
-	v, err := svc.Create(h.ctx, CreateSandbox{OwnerID: "me", Image: "i"})
+	v, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{Image: "i"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	p, err := svc.PreviewToken(v.ID, "me", 3000)
+	p, err := svc.Preview(v.ID, "me", 3000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("https://3000-%s.preview.example.com/?t=%s", v.ID, p.Token)
-	if p.URL != want {
-		t.Errorf("url = %q, want %q", p.URL, want)
+	want := fmt.Sprintf("https://3000-%s.preview.example.com/?t=", v.ID)
+	if !strings.HasPrefix(p.URL, want) {
+		t.Errorf("url = %q, want it to start %q", p.URL, want)
 	}
 	if p.ExpiresInS != 600 {
 		t.Errorf("expires_in_s = %d", p.ExpiresInS)
 	}
-	if _, err := svc.PreviewToken(v.ID, "me", 0); !errors.Is(err, ErrInvalid) {
-		t.Errorf("port 0 got %v", err)
+	payload, ok := NewTokens("k").Verify(tokenIn(t, p.URL, "t"), TokenPreview)
+	if !ok || payload.SID != v.ID || payload.Port != 3000 {
+		t.Errorf("token in the url = %+v, %v", payload, ok)
 	}
-	if _, err := svc.PreviewToken(v.ID, "you", 3000); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Preview(v.ID, "you", 3000); !errors.Is(err, ErrNotFound) {
 		t.Errorf("another owner got %v", err)
 	}
+}
+
+// tokenIn pulls a minted credential back out of the URL it was embedded in.
+func tokenIn(t *testing.T, raw, param string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Query().Get(param)
 }
 
 func TestTagsNoHostCanEverCarryAre422(t *testing.T) {
@@ -177,8 +209,8 @@ func TestTagsNoHostCanEverCarryAre422(t *testing.T) {
 	svc := service(h)
 	h.host("docker", 1, "driver:docker", "arch:amd64")
 
-	_, err := svc.Create(h.ctx, CreateSandbox{
-		OwnerID: "me", Image: "i", Tags: []string{"driver:kubernetes"},
+	_, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{
+		Image: "i", Tags: []string{"driver:kubernetes"},
 	})
 	if !errors.Is(err, ErrUnsatisfiable) {
 		t.Fatalf("err = %v, want unsatisfiable rather than a sandbox queued forever", err)
@@ -194,13 +226,13 @@ func TestTagsNoHostCanEverCarryAre422(t *testing.T) {
 
 	// A tag the fleet does carry queues as usual, even with every host full.
 	h.hub.setCapacity("docker", 1, 1)
-	v, err := svc.Create(h.ctx, CreateSandbox{
-		OwnerID: "me", Image: "i", Tags: []string{"driver:docker"},
+	v, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{
+		Image: "i", Tags: []string{"driver:docker"},
 	})
 	if err != nil {
 		t.Fatalf("a busy fleet is not an unsatisfiable one: %v", err)
 	}
-	if v.Status != "queued" {
+	if v.Status != openapi.SandboxViewStatusQueued {
 		t.Errorf("status = %s", v.Status)
 	}
 }
@@ -210,7 +242,7 @@ func TestQueuePositionsComeFromOneSnapshot(t *testing.T) {
 	svc := service(h)
 	var ids []string
 	for range 3 {
-		v, err := svc.Create(h.ctx, CreateSandbox{OwnerID: "me", Image: "i"})
+		v, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{Image: "i"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -224,8 +256,8 @@ func TestQueuePositionsComeFromOneSnapshot(t *testing.T) {
 	// Newest first in the response, oldest first in the queue.
 	want := map[string]int{ids[0]: 1, ids[1]: 2, ids[2]: 3}
 	for _, v := range list {
-		if v.QueuePosition == nil || *v.QueuePosition != want[v.ID] {
-			t.Errorf("%s position = %v, want %d", v.ID, v.QueuePosition, want[v.ID])
+		if v.QueuePosition.Null || v.QueuePosition.Value != want[v.ID] {
+			t.Errorf("%s position = %+v, want %d", v.ID, v.QueuePosition, want[v.ID])
 		}
 	}
 
@@ -248,12 +280,12 @@ func TestQueuePositionsComeFromOneSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.QueuePosition != nil {
-		t.Errorf("ended sandbox has position %v", *got.QueuePosition)
+	if !got.QueuePosition.Null {
+		t.Errorf("ended sandbox has position %d", got.QueuePosition.Value)
 	}
 	after, _ := svc.Get(ids[1], "me")
-	if after.QueuePosition == nil || *after.QueuePosition != 1 {
-		t.Errorf("the queue closed up: %v", after.QueuePosition)
+	if after.QueuePosition.Null || after.QueuePosition.Value != 1 {
+		t.Errorf("the queue closed up: %+v", after.QueuePosition)
 	}
 }
 
@@ -271,10 +303,9 @@ func TestASandboxIsPlacedExactlyOnce(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, err := svc.Create(h.ctx, CreateSandbox{
-				OwnerID:   "me",
+			_, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{
 				Image:     "i",
-				SecretEnv: map[string]string{"GIT_TOKEN": fmt.Sprintf("secret-%d", i)},
+				SecretEnv: secretEnv(map[string]string{"GIT_TOKEN": fmt.Sprintf("secret-%d", i)}),
 			})
 			if err != nil {
 				t.Error(err)
@@ -312,18 +343,18 @@ func TestHostOnlineIsLiveNotStored(t *testing.T) {
 	h := newHarness(t, nil)
 	svc := service(h)
 	h.host("h1", 1)
-	v, err := svc.Create(h.ctx, CreateSandbox{OwnerID: "me", Image: "i"})
+	v, err := svc.Create(h.ctx, "me", &openapi.CreateSandbox{Image: "i"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	got, _ := svc.Get(v.ID, "me")
-	if got.HostOnline == nil || !*got.HostOnline {
-		t.Fatalf("host_online = %v, want true while the host is connected", got.HostOnline)
+	if got.HostOnline.Null || !got.HostOnline.Value {
+		t.Fatalf("host_online = %+v, want true while the host is connected", got.HostOnline)
 	}
 	h.hub.offline("h1")
 	got, _ = svc.Get(v.ID, "me")
-	if got.HostOnline == nil || *got.HostOnline {
-		t.Errorf("host_online = %v after the host went away", got.HostOnline)
+	if got.HostOnline.Null || got.HostOnline.Value {
+		t.Errorf("host_online = %+v after the host went away", got.HostOnline)
 	}
 }

@@ -1,6 +1,7 @@
-// Package http is the JSON API and the two sockets in front of it. huma owns the
-// routing, the validation and the OpenAPI document; the request and response structs in
-// `cp` are the schema. Nothing below this package knows a status code.
+// Package http is the JSON API and the sockets beside it. The routing, the decoding and
+// the validation are generated from the two documents in `api/`: this package supplies the
+// two `Handler` implementations, the credential check, and the mapping from a use case's
+// error to a status code. Nothing below it knows a status code.
 package http
 
 import (
@@ -8,14 +9,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humago"
-
+	"sandboxd/api"
+	"sandboxd/internal/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/preview"
+	"sandboxd/internal/openapi"
 	"sandboxd/internal/wire"
 )
 
@@ -23,15 +23,15 @@ import (
 // one stays a transport and nothing more.
 type (
 	sandboxAPI interface {
-		Create(ctx context.Context, b cp.CreateSandbox) (cp.SandboxView, error)
-		List(ownerID string) ([]cp.SandboxView, error)
-		Get(sid, ownerID string) (cp.SandboxView, error)
-		Cancel(ctx context.Context, sid, ownerID string) (cp.SandboxView, error)
-		AttachToken(sid, ownerID string) (cp.AttachToken, error)
-		PreviewToken(sid, ownerID string, port int) (cp.PreviewToken, error)
+		Create(ctx context.Context, ownerID string, b *openapi.CreateSandbox) (*openapi.SandboxView, error)
+		List(ownerID string) ([]openapi.SandboxView, error)
+		Get(sid, ownerID string) (*openapi.SandboxView, error)
+		Cancel(ctx context.Context, sid, ownerID string) (*openapi.SandboxView, error)
+		Terminal(sid, ownerID string) (*openapi.Link, error)
+		Preview(sid, ownerID string, port int) (*openapi.Link, error)
 	}
 	hostAPI interface {
-		List() ([]cp.HostView, error)
+		List() ([]adminapi.HostView, error)
 		Approve(id, code string) error
 		Revoke(id string) error
 	}
@@ -44,11 +44,10 @@ type (
 	}
 )
 
-// Deps is what cmd/sandboxd-api hands over. It is a struct rather than six arguments
+// Deps is what cmd/sandboxd-api hands over. It is a struct rather than seven arguments
 // because every one of them is required and named.
 type Deps struct {
 	ServiceToken string
-	PublicURL    string
 	Tokens       *cp.Tokens
 	Sandboxes    sandboxAPI
 	Hosts        hostAPI
@@ -59,91 +58,46 @@ type Deps struct {
 	Log    *slog.Logger
 }
 
-// Open to anyone: the probe, the document, the token-gated sockets, and the worker
-// tunnel, which authenticates by fingerprint in its hello rather than by bearer.
-var public = map[string]struct{}{
-	"/healthz":      {},
-	"/attach":       {},
-	"/tunnel":       {},
-	"/doc":          {},
-	"/openapi.json": {},
-	"/openapi.yaml": {},
-}
-
 // New builds the whole HTTP surface, preview hosts included.
-func New(d Deps) http.Handler {
-	mux := http.NewServeMux()
-	register(mux, d.PublicURL, d.Sandboxes, d.Hosts, d.Log)
+//
+// The two generated routers are chained rather than merged: the client's falls through to
+// the admin's, and the admin's to the 404 below. Their paths are disjoint, so no request
+// is ever offered to both — and neither document has to know the other exists, which is
+// the point of there being two (DESIGN.md decision 27).
+func New(d Deps) (http.Handler, error) {
+	admin, err := adminapi.NewServer(
+		&hostHandler{hosts: d.Hosts, log: d.Log},
+		adminAuth{token: d.ServiceToken},
+		adminapi.WithNotFound(notFound),
+		adminapi.WithErrorHandler(adminErrors(d.Log)),
+	)
+	if err != nil {
+		return nil, err
+	}
+	client, err := openapi.NewServer(
+		&sandboxHandler{sandboxes: d.Sandboxes, log: d.Log},
+		clientAuth{token: d.ServiceToken},
+		openapi.WithNotFound(admin.ServeHTTP),
+		openapi.WithErrorHandler(clientErrors(d.Log)),
+	)
+	if err != nil {
+		return nil, err
+	}
 
+	mux := http.NewServeMux()
+	// The four routes the generated servers do not serve. The terminal socket is in the
+	// client document and is registered here first: an upgrade hijacks the connection, and
+	// a generated handler is handed a context and params, not a ResponseWriter.
+	mux.HandleFunc("GET /sandboxes/{id}/terminal", terminal(d.Tokens, d.Attach))
 	mux.HandleFunc("GET /tunnel", d.Tunnel)
-	mux.HandleFunc("GET /attach", attachHandler(d.Tokens, d.Attach))
 	mux.HandleFunc("GET /doc", docPage)
-	mux.HandleFunc("/", notFound)
+	mux.HandleFunc("GET /openapi.yaml", document(api.Client))
+	mux.HandleFunc("GET /openapi.admin.yaml", document(api.Admin))
+	mux.Handle("/", client)
 
 	// The preview proxy matches on the Host header, so it runs before routing and before
-	// the bearer check: its own cookie is the credential there.
-	return byHost(d.Preview, bearer(d.ServiceToken, mux))
-}
-
-// register puts every operation on one huma API. Spec calls it too, with no use cases
-// behind it, so the document and the running server can never describe different routes.
-func register(mux *http.ServeMux, publicURL string, s sandboxAPI, h hostAPI, log *slog.Logger) huma.API {
-	useHumaGlobals()
-	api := humago.New(mux, config(publicURL))
-	registerSandboxes(api, s, log)
-	registerHosts(api, h, log)
-	registerService(api)
-	documentAttach(api.OpenAPI())
-	nullableEnums(api.OpenAPI().Components.Schemas)
-	return api
-}
-
-// nullableEnums repairs the one shape huma renders as a contradiction: a nullable field
-// carrying an enum lists its values but not `null`, so the enum forbids the very value the
-// type allows. A generator believes the enum, and `SandboxView.ended_reason` — null until
-// the sandbox ends — would reach a client typed as always present.
-func nullableEnums(reg huma.Registry) {
-	for _, schema := range reg.Map() {
-		for _, prop := range schema.Properties {
-			if prop.Nullable && len(prop.Enum) > 0 && !slices.Contains(prop.Enum, nil) {
-				prop.Enum = append(prop.Enum, nil)
-			}
-		}
-	}
-}
-
-func config(publicURL string) huma.Config {
-	cfg := huma.DefaultConfig("sandboxd control plane", "1.0.0")
-	cfg.Info.Description = "Generic sandboxes on your own hosts. " +
-		"Presets, repos and agents are a client concern and reach this API as an image, " +
-		"a command, env and tags."
-	// Our own page, at the path the TypeScript control plane served it from.
-	cfg.DocsPath = ""
-	// huma's only create hook hangs a `$schema` link off every body it renders. Dropping
-	// it keeps the document free of a field no caller sends and no generator should type.
-	cfg.CreateHooks = nil
-	cfg.Servers = []*huma.Server{{URL: publicURL}}
-	cfg.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-		"Bearer": {Type: "http", Scheme: "bearer"},
-	}
-	cfg.Security = []map[string][]string{{"Bearer": {}}}
-	return cfg
-}
-
-// bearer gates everything the parent app owns. The few public paths are listed above.
-func bearer(token string, next http.Handler) http.Handler {
-	expected := "Bearer " + token
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := public[r.URL.Path]; ok {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if r.Header.Get("Authorization") != expected {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	// any credential check: its own cookie is the credential there.
+	return byHost(d.Preview, mux), nil
 }
 
 func byHost(p previewer, next http.Handler) http.Handler {
@@ -156,14 +110,18 @@ func byHost(p previewer, next http.Handler) http.Handler {
 	})
 }
 
-// attachHandler upgrades a browser to a sandbox's terminal. Its token is the gate, which
-// is why the path is public.
-func attachHandler(tokens *cp.Tokens, bridge attacher) http.HandlerFunc {
+// terminal upgrades a browser onto a sandbox's PTY. The token in the query is the whole
+// gate: a WebSocket carries neither the service token nor the owner header, and this token
+// is short-lived and names one sandbox (decision 26).
+func terminal(tokens *cp.Tokens, bridge attacher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		payload, ok := tokens.Verify(q.Get("token"), cp.TokenAttach)
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "invalid or expired attach token")
+		// The signature says the token is ours, not that it is for the sandbox in the
+		// path. Serving A's terminal on B's URL would be answering a different question
+		// than the one asked.
+		if !ok || payload.SID != r.PathValue("id") {
+			fail(w, http.StatusUnauthorized, "invalid or expired terminal token")
 			return
 		}
 		bridge.Serve(w, r, payload.SID, wire.Size{
@@ -181,12 +139,22 @@ func positive(s string, fallback int) int {
 	return n
 }
 
-func notFound(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusNotFound, "route not found")
+// document serves one of the two contracts as the file it is. The control plane hands out
+// the bytes it was generated from rather than a second rendering of them, which is the
+// only way the served document and the checked-in one cannot disagree.
+func document(doc []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		_, _ = w.Write(doc)
+	}
 }
 
-// writeError is for the handlers huma does not own. They still speak its error shape.
-func writeError(w http.ResponseWriter, status int, msg string) {
+func notFound(w http.ResponseWriter, _ *http.Request) {
+	fail(w, http.StatusNotFound, "route not found")
+}
+
+// fail is for the handlers no generated server owns. They still speak its error shape.
+func fail(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
@@ -204,7 +172,14 @@ func docPage(w http.ResponseWriter, _ *http.Request) {
   <body>
     <div id="app"></div>
     <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
-    <script>Scalar.createApiReference('#app', { url: '/openapi.json' })</script>
+    <script>
+      Scalar.createApiReference('#app', {
+        sources: [
+          { url: '/openapi.yaml', title: 'Client' },
+          { url: '/openapi.admin.yaml', title: 'Admin' },
+        ],
+      })
+    </script>
   </body>
 </html>`))
 }

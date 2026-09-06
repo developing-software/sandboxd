@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 # Go is the product; sdk/typescript and examples/ui are clients of a documented API and
-# gate only themselves. The Go job already fails when openapi.json is stale.
+# gate only themselves. Both generated trees are checked in and both jobs regenerate and
+# diff, so `api/client.yaml` and what comes out of it can only be in step.
 jobs:
   # `golangci-lint fmt --diff` is the gofumpt check, so the formatter is pinned by the
   # linter and not installed twice.
@@ -21,6 +22,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # internal/openapi and internal/adminapi are checked in so a build needs no
+      # generator. ogen is a `tool` in go.mod, so this needs nothing installed — and the
+      # version is pinned there, which is what makes the diff below mean anything.
+      - name: generated servers are current
+        run: go generate ./... && git diff --exit-code internal/openapi internal/adminapi
       - run: go build ./...
       - run: go vet ./...
       - uses: golangci/golangci-lint-action@v8
@@ -43,8 +49,8 @@ jobs:
       - run: bun run fmt:check
       - run: bun run lint
       - run: bun run typecheck
-      # src/generated is checked in so a consumer needs no codegen. Regenerating it must
-      # be a no-op, or the output and the document have drifted.
+      # src/generated is checked in so a consumer needs no codegen. Regenerating it from
+      # ../../api/client.yaml must be a no-op, or the client and the contract have drifted.
       - name: generated output is current
         run: bun run generate && git diff --exit-code src/generated
 

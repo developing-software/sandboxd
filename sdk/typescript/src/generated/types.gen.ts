@@ -4,54 +4,93 @@ export type ClientOptions = {
     baseUrl: 'http://localhost:8080' | (string & {});
 };
 
-export type ApproveBody = {
-    /**
-     * What the worker printed when it enrolled.
-     */
-    code: string;
-};
-
-export type AttachToken = {
-    expires_in_s: number;
-    token: string;
-    wss_url: string;
-};
-
-export type Capacity = {
-    max: number;
-    running: number;
-};
-
 export type CreateSandbox = {
+    image: string;
     /**
-     * Exec'd in the PTY. Omit for the image's default entry.
+     * Exec'd in the PTY. Omit for the image's own default entry.
      */
     cmd?: Array<string>;
     /**
-     * Persisted, visible in the API.
+     * Ended after this long without PTY traffic in either direction. Default 1800.
+     */
+    idle_timeout_s?: number;
+    /**
+     * Persisted, and visible in the API.
      */
     env?: {
         [key: string]: string;
     };
     /**
-     * Ended after this long without PTY traffic. Default 1800.
-     */
-    idle_timeout_s?: number;
-    image: string;
-    /**
-     * The parent app's user. Every later call must present the same value.
-     */
-    owner_id: string;
-    /**
-     * Forwarded to the worker, never persisted or shown.
+     * Forwarded to the worker and never persisted or shown. The only place a secret travels; no row ever holds one.
      */
     secret_env?: {
         [key: string]: string;
     };
     /**
-     * Host tags this sandbox requires. Only hosts carrying all of them are candidates.
+     * Host tags this sandbox requires. Only hosts carrying all of them are candidates. TERM and SANDBOXD_SESSION_ID are reserved env names and are refused in either map.
      */
     tags?: Array<string>;
+};
+
+export type PreviewBody = {
+    /**
+     * The port inside the sandbox to expose.
+     */
+    port: number;
+};
+
+export type SandboxView = {
+    id: string;
+    owner_id: string;
+    status: 'queued' | 'creating' | 'running' | 'ended';
+    /**
+     * Null until the sandbox is placed.
+     */
+    host_id: string | null;
+    /**
+     * Live, not stored. Null while the sandbox has no host.
+     */
+    host_online: boolean | null;
+    /**
+     * 1-based, and only while queued.
+     */
+    queue_position: number | null;
+    ended_reason: 'closed' | 'idle' | 'failed' | 'lost' | 'exited' | null;
+    ended_detail: string | null;
+    image: string;
+    /**
+     * Empty means the image's own default entry.
+     */
+    cmd: Array<string>;
+    env: {
+        [key: string]: string;
+    };
+    /**
+     * What this sandbox requires, not what its host carries.
+     */
+    tags: Array<string>;
+    idle_timeout_s: number;
+    /**
+     * Unix milliseconds.
+     */
+    created_at: number;
+    started_at: number | null;
+    ended_at: number | null;
+};
+
+export type Link = {
+    /**
+     * Open this from the browser. It carries its own credential.
+     */
+    url: string;
+    /**
+     * How long the URL stays good. Mint another when it lapses.
+     */
+    expires_in_s: number;
+};
+
+export type Health = {
+    ok: boolean;
 };
 
 export type ErrorModel = {
@@ -65,104 +104,20 @@ export type ErrorModel = {
     issues?: Array<Issue>;
 };
 
-export type HostView = {
-    /**
-     * Only while pending.
-     */
-    approve_code?: string;
-    /**
-     * Only while online.
-     */
-    capacity?: Capacity;
-    created_at: number;
-    id: string;
-    last_seen_at: number | null;
-    name: string;
-    /**
-     * Tunnel connected right now.
-     */
-    online: boolean;
-    status: 'pending' | 'approved' | 'revoked';
-    /**
-     * What this host reported in its last hello.
-     */
-    tags: Array<string>;
-};
-
 export type Issue = {
-    message: string;
+    /**
+     * The field a caller has to fix, as they sent it.
+     */
     path?: string;
+    message: string;
 };
 
-export type Ok = {
-    ok: true;
-};
+/**
+ * The parent app's user. Every call about a sandbox must present the same value the sandbox was created with; one that does not is answered as if the sandbox did not exist.
+ */
+export type Owner = string;
 
-export type OwnerBody = {
-    owner_id: string;
-};
-
-export type PreviewBody = {
-    owner_id: string;
-    port: number;
-};
-
-export type PreviewToken = {
-    expires_in_s: number;
-    token: string;
-    url: string;
-};
-
-export type SandboxView = {
-    cmd: Array<string>;
-    created_at: number;
-    ended_at: number | null;
-    ended_detail: string | null;
-    ended_reason: 'closed' | 'idle' | 'failed' | 'lost' | 'exited' | null;
-    env: {
-        [key: string]: string;
-    };
-    host_id: string | null;
-    /**
-     * Live, not stored.
-     */
-    host_online: boolean | null;
-    id: string;
-    idle_timeout_s: number;
-    image: string;
-    owner_id: string;
-    /**
-     * 1-based, only while queued.
-     */
-    queue_position: number | null;
-    started_at: number | null;
-    status: 'queued' | 'creating' | 'running' | 'ended';
-    tags: Array<string>;
-};
-
-export type AttachData = {
-    body?: never;
-    path?: never;
-    query: {
-        token: string;
-        /**
-         * Default 120.
-         */
-        cols?: number;
-        /**
-         * Default 40.
-         */
-        rows?: number;
-    };
-    url: '/attach';
-};
-
-export type AttachErrors = {
-    /**
-     * Invalid or expired attach token.
-     */
-    401: unknown;
-};
+export type SandboxId = string;
 
 export type HealthzData = {
     body?: never;
@@ -173,7 +128,7 @@ export type HealthzData = {
 
 export type HealthzErrors = {
     /**
-     * Error
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
      */
     default: ErrorModel;
 };
@@ -182,160 +137,38 @@ export type HealthzError = HealthzErrors[keyof HealthzErrors];
 
 export type HealthzResponses = {
     /**
-     * OK
+     * The process is up.
      */
-    200: Ok;
+    200: Health;
 };
 
 export type HealthzResponse = HealthzResponses[keyof HealthzResponses];
 
-export type ListHostsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/hosts';
-};
-
-export type ListHostsErrors = {
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
-};
-
-export type ListHostsError = ListHostsErrors[keyof ListHostsErrors];
-
-export type ListHostsResponses = {
-    /**
-     * OK
-     */
-    200: Array<HostView>;
-};
-
-export type ListHostsResponse = ListHostsResponses[keyof ListHostsResponses];
-
-export type ApproveHostData = {
-    body: ApproveBody;
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/hosts/{id}/approve';
-};
-
-export type ApproveHostErrors = {
-    /**
-     * Bad Request
-     */
-    400: ErrorModel;
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Not Found
-     */
-    404: ErrorModel;
-    /**
-     * Conflict
-     */
-    409: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
-};
-
-export type ApproveHostError = ApproveHostErrors[keyof ApproveHostErrors];
-
-export type ApproveHostResponses = {
-    /**
-     * OK
-     */
-    200: Ok;
-};
-
-export type ApproveHostResponse = ApproveHostResponses[keyof ApproveHostResponses];
-
-export type RevokeHostData = {
-    body?: never;
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/hosts/{id}/revoke';
-};
-
-export type RevokeHostErrors = {
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Not Found
-     */
-    404: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
-};
-
-export type RevokeHostError = RevokeHostErrors[keyof RevokeHostErrors];
-
-export type RevokeHostResponses = {
-    /**
-     * OK
-     */
-    200: Ok;
-};
-
-export type RevokeHostResponse = RevokeHostResponses[keyof RevokeHostResponses];
-
 export type ListSandboxesData = {
     body?: never;
-    path?: never;
-    query?: {
+    headers: {
         /**
-         * Restrict the list to one owner.
+         * The parent app's user. Every call about a sandbox must present the same value the sandbox was created with; one that does not is answered as if the sandbox did not exist.
          */
-        owner_id?: string;
+        'X-Sandboxd-Owner': string;
     };
+    path?: never;
+    query?: never;
     url: '/sandboxes';
 };
 
 export type ListSandboxesErrors = {
     /**
-     * Unauthorized
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
      */
-    401: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
+    default: ErrorModel;
 };
 
 export type ListSandboxesError = ListSandboxesErrors[keyof ListSandboxesErrors];
 
 export type ListSandboxesResponses = {
     /**
-     * OK
+     * This owner's sandboxes, newest first.
      */
     200: Array<SandboxView>;
 };
@@ -344,6 +177,12 @@ export type ListSandboxesResponse = ListSandboxesResponses[keyof ListSandboxesRe
 
 export type CreateSandboxData = {
     body: CreateSandbox;
+    headers: {
+        /**
+         * The parent app's user. Every call about a sandbox must present the same value the sandbox was created with; one that does not is answered as if the sandbox did not exist.
+         */
+        'X-Sandboxd-Owner': string;
+    };
     path?: never;
     query?: never;
     url: '/sandboxes';
@@ -351,28 +190,16 @@ export type CreateSandboxData = {
 
 export type CreateSandboxErrors = {
     /**
-     * Bad Request
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
      */
-    400: ErrorModel;
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
+    default: ErrorModel;
 };
 
 export type CreateSandboxError = CreateSandboxErrors[keyof CreateSandboxErrors];
 
 export type CreateSandboxResponses = {
     /**
-     * Created
+     * Placed on a host, or queued.
      */
     201: SandboxView;
 };
@@ -381,43 +208,31 @@ export type CreateSandboxResponse = CreateSandboxResponses[keyof CreateSandboxRe
 
 export type EndSandboxData = {
     body?: never;
+    headers: {
+        /**
+         * The parent app's user. Every call about a sandbox must present the same value the sandbox was created with; one that does not is answered as if the sandbox did not exist.
+         */
+        'X-Sandboxd-Owner': string;
+    };
     path: {
         id: string;
     };
-    query: {
-        owner_id: string;
-    };
+    query?: never;
     url: '/sandboxes/{id}';
 };
 
 export type EndSandboxErrors = {
     /**
-     * Bad Request
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
      */
-    400: ErrorModel;
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Not Found
-     */
-    404: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
+    default: ErrorModel;
 };
 
 export type EndSandboxError = EndSandboxErrors[keyof EndSandboxErrors];
 
 export type EndSandboxResponses = {
     /**
-     * OK
+     * The sandbox, as it stands after being told to stop.
      */
     200: SandboxView;
 };
@@ -426,135 +241,139 @@ export type EndSandboxResponse = EndSandboxResponses[keyof EndSandboxResponses];
 
 export type GetSandboxData = {
     body?: never;
+    headers: {
+        /**
+         * The parent app's user. Every call about a sandbox must present the same value the sandbox was created with; one that does not is answered as if the sandbox did not exist.
+         */
+        'X-Sandboxd-Owner': string;
+    };
     path: {
         id: string;
     };
-    query: {
-        owner_id: string;
-    };
+    query?: never;
     url: '/sandboxes/{id}';
 };
 
 export type GetSandboxErrors = {
     /**
-     * Bad Request
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
      */
-    400: ErrorModel;
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Not Found
-     */
-    404: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
+    default: ErrorModel;
 };
 
 export type GetSandboxError = GetSandboxErrors[keyof GetSandboxErrors];
 
 export type GetSandboxResponses = {
     /**
-     * OK
+     * The sandbox.
      */
     200: SandboxView;
 };
 
 export type GetSandboxResponse = GetSandboxResponses[keyof GetSandboxResponses];
 
-export type MintAttachTokenData = {
-    body: OwnerBody;
+export type AttachTerminalData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query: {
+        /**
+         * The token embedded in the URL that POST to this path returned.
+         */
+        token: string;
+        /**
+         * Terminal width in cells. Default 120.
+         */
+        cols?: number;
+        /**
+         * Terminal height in cells. Default 40.
+         */
+        rows?: number;
+    };
+    url: '/sandboxes/{id}/terminal';
+};
+
+export type AttachTerminalErrors = {
+    /**
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
+     */
+    default: ErrorModel;
+};
+
+export type AttachTerminalError = AttachTerminalErrors[keyof AttachTerminalErrors];
+
+export type AttachTerminalResponses = {
+    /**
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
+     */
+    default: ErrorModel;
+};
+
+export type AttachTerminalResponse = AttachTerminalResponses[keyof AttachTerminalResponses];
+
+export type OpenTerminalData = {
+    body?: never;
+    headers: {
+        /**
+         * The parent app's user. Every call about a sandbox must present the same value the sandbox was created with; one that does not is answered as if the sandbox did not exist.
+         */
+        'X-Sandboxd-Owner': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/sandboxes/{id}/attach-token';
+    url: '/sandboxes/{id}/terminal';
 };
 
-export type MintAttachTokenErrors = {
+export type OpenTerminalErrors = {
     /**
-     * Bad Request
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
      */
-    400: ErrorModel;
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Not Found
-     */
-    404: ErrorModel;
-    /**
-     * Conflict
-     */
-    409: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
+    default: ErrorModel;
 };
 
-export type MintAttachTokenError = MintAttachTokenErrors[keyof MintAttachTokenErrors];
+export type OpenTerminalError = OpenTerminalErrors[keyof OpenTerminalErrors];
 
-export type MintAttachTokenResponses = {
+export type OpenTerminalResponses = {
     /**
-     * OK
+     * A short-lived `wss://` URL for one terminal on one sandbox.
      */
-    200: AttachToken;
+    201: Link;
 };
 
-export type MintAttachTokenResponse = MintAttachTokenResponses[keyof MintAttachTokenResponses];
+export type OpenTerminalResponse = OpenTerminalResponses[keyof OpenTerminalResponses];
 
-export type MintPreviewTokenData = {
+export type OpenPreviewData = {
     body: PreviewBody;
+    headers: {
+        /**
+         * The parent app's user. Every call about a sandbox must present the same value the sandbox was created with; one that does not is answered as if the sandbox did not exist.
+         */
+        'X-Sandboxd-Owner': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/sandboxes/{id}/preview-token';
+    url: '/sandboxes/{id}/preview';
 };
 
-export type MintPreviewTokenErrors = {
+export type OpenPreviewErrors = {
     /**
-     * Bad Request
+     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
      */
-    400: ErrorModel;
-    /**
-     * Unauthorized
-     */
-    401: ErrorModel;
-    /**
-     * Not Found
-     */
-    404: ErrorModel;
-    /**
-     * Unprocessable Entity
-     */
-    422: ErrorModel;
-    /**
-     * Internal Server Error
-     */
-    500: ErrorModel;
+    default: ErrorModel;
 };
 
-export type MintPreviewTokenError = MintPreviewTokenErrors[keyof MintPreviewTokenErrors];
+export type OpenPreviewError = OpenPreviewErrors[keyof OpenPreviewErrors];
 
-export type MintPreviewTokenResponses = {
+export type OpenPreviewResponses = {
     /**
-     * OK
+     * A short-lived URL for one port in one sandbox.
      */
-    200: PreviewToken;
+    201: Link;
 };
 
-export type MintPreviewTokenResponse = MintPreviewTokenResponses[keyof MintPreviewTokenResponses];
+export type OpenPreviewResponse = OpenPreviewResponses[keyof OpenPreviewResponses];

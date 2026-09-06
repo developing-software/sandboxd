@@ -1,0 +1,189 @@
+# The operator's half of the control plane: enrolling workers and looking at the fleet.
+#
+# Split from api/client.yaml deliberately. That document is a contract — a published SDK
+# is generated from it and a parent app is written against it, so it changes carefully.
+# This one is not: it is read by whoever operates the fleet, it has no published client,
+# and it is free to break whenever the operator surface is better for it.
+#
+#   internal/adminapi  ogen's server and types  (go generate ./...)
+#
+# No TypeScript SDK is generated from this file. `examples/ui` generates its own types
+# locally if it wants them, which puts the churn where the churn is tolerated.
+#
+# Both documents describe routes on the same listener and, for now, behind the same
+# credential (DESIGN.md decision 24). Giving the operator surface its own token is a
+# change to the `Bearer` scheme below and a switch in one SecurityHandler — this file
+# existing separately is what makes that a local edit rather than a document split under
+# pressure.
+
+openapi: 3.1.0
+
+info:
+  title: sandboxd control plane — admin
+  version: '1.0.0'
+  description: >-
+    Worker enrolment and the fleet. Operator surface: no published client is generated
+    from this document, and it may break between releases.
+
+servers:
+  - url: http://localhost:8080
+
+security:
+  - Bearer: []
+
+tags:
+  - name: Hosts
+    description: Worker enrolment and the fleet, for whoever operates it.
+
+paths:
+  /hosts:
+    get:
+      operationId: list-hosts
+      summary: List hosts
+      description: Every enrolled host, with what it reported about itself.
+      tags: [Hosts]
+      responses:
+        '200':
+          description: Every enrolled host, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HostView' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /hosts/{id}/approve:
+    post:
+      operationId: approve-host
+      summary: Approve a pending host
+      description: >-
+        The code is what the worker printed when it enrolled. A worker started with the
+        operator's join token skips this and is approved on hello. 409 when the host is not
+        pending; 400 when the code does not match.
+      tags: [Hosts]
+      parameters:
+        - $ref: '#/components/parameters/HostID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveBody' }
+      responses:
+        # Nothing to say that the status does not already say (decision 25).
+        '204':
+          description: >-
+            Approved. The socket it is holding is promoted, so the worker does not have to
+            reconnect to find out.
+        default: { $ref: '#/components/responses/Error' }
+
+  /hosts/{id}/revoke:
+    post:
+      operationId: revoke-host
+      summary: Revoke a host
+      description: >-
+        The host is rejected on its next hello, and on the socket it is holding now. The row
+        stays — a revoked host is remembered, not removed.
+      tags: [Hosts]
+      parameters:
+        - $ref: '#/components/parameters/HostID'
+      responses:
+        '204':
+          description: Revoked.
+        default: { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    Bearer:
+      type: http
+      scheme: bearer
+      description: >-
+        SANDBOXD_SERVICE_TOKEN today, the same one the client API takes. The operator
+        surface earning its own token is a change here and nowhere else.
+
+  parameters:
+    HostID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: >-
+        Every failure. `error` is the first problem in prose; `issues` names each failing
+        field when the request did not validate.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorModel' }
+
+  schemas:
+    ApproveBody:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: What the worker printed when it enrolled.
+
+    HostView:
+      type: object
+      additionalProperties: false
+      required: [id, name, status, online, tags, last_seen_at, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status:
+          type: string
+          enum: [pending, approved, revoked]
+        approve_code:
+          type: string
+          description: What the worker printed. Present only while the host is pending.
+        online: { type: boolean, description: Tunnel connected right now. }
+        # Absent rather than null: a nullable object reference is not expressible, and
+        # `online` already says whether there is a number to read (decision 23).
+        capacity:
+          $ref: '#/components/schemas/Capacity'
+          description: Present only while the host is online.
+        tags:
+          type: array
+          items: { type: string }
+          description: What this host reported in its last hello.
+        last_seen_at: { type: [integer, 'null'], format: int64 }
+        created_at: { type: integer, format: int64 }
+
+    Capacity:
+      type: object
+      additionalProperties: false
+      required: [running, max]
+      properties:
+        running: { type: integer }
+        max: { type: integer }
+
+    # ErrorModel and Issue are duplicated from api/client.yaml rather than $ref'd across
+    # files, so each document stands alone and neither generator needs to resolve the
+    # other. The two must stay the same shape — one Go error mapping serves both
+    # listeners — but that is a fact about the code, not a dependency between contracts.
+    ErrorModel:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: The first problem, in prose.
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/Issue' }
+          description: Every failing field, for validation errors.
+
+    Issue:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        path:
+          type: string
+          description: The field a caller has to fix, as they sent it.
+        message: { type: string }

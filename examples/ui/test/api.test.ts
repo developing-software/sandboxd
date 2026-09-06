@@ -5,11 +5,10 @@ import { PresetRegistry, loadPresetDir } from '../src/presets/index'
 
 const loaded = loadPresetDir(resolve(import.meta.dir, '../presets'))
 
-/** A fake API: records every request, answers with a fixed body. */
+/** A fake API: records every request the SDK builds, answers with a fixed body. */
 function setup() {
   const calls: { method: string; url: string; auth: string | null; body: unknown }[] = []
   const fetch = async (input: string | URL | Request, init?: RequestInit) => {
-    // Both call shapes: the proxy passes a URL and an init, the SDK a built Request.
     const req = new Request(input, init)
     calls.push({
       method: req.method,
@@ -78,25 +77,36 @@ test('POST /api/sandboxes resolves the preset, then calls the API with the token
   expect((await app.request('/api/sandboxes', { method: 'POST', body: '{' })).status).toBe(400)
 })
 
-test('everything else under /api is forwarded with the token added', async () => {
+test('every other route is the SDK call it names, with the token added', async () => {
   const { app, calls } = setup()
+  const post = (path: string, body?: unknown) =>
+    app.request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  await app.request('/api/hosts')
+  await post('/api/hosts/h1/approve', { code: 'ABCD' })
+  await post('/api/hosts/h1/revoke')
   await app.request('/api/sandboxes?owner_id=me')
-  await app.request('/api/sandboxes/s_1/attach-token', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ owner_id: 'me' }),
-  })
-  await app.request('/api/hosts/h1/revoke', { method: 'POST' })
-  expect(calls.map((c) => [c.method, c.url, c.auth, c.body])).toEqual([
-    ['GET', 'http://api.test/sandboxes?owner_id=me', 'Bearer secret', null],
-    [
-      'POST',
-      'http://api.test/sandboxes/s_1/attach-token',
-      'Bearer secret',
-      { owner_id: 'me' },
-    ],
-    ['POST', 'http://api.test/hosts/h1/revoke', 'Bearer secret', null],
+  await app.request('/api/sandboxes/s_1?owner_id=me')
+  await app.request('/api/sandboxes/s_1?owner_id=me', { method: 'DELETE' })
+  await post('/api/sandboxes/s_1/attach-token', { owner_id: 'me' })
+  await post('/api/sandboxes/s_1/preview-token', { owner_id: 'me', port: 3000 })
+  expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+    ['GET', 'http://api.test/hosts', null],
+    ['POST', 'http://api.test/hosts/h1/approve', { code: 'ABCD' }],
+    ['POST', 'http://api.test/hosts/h1/revoke', null],
+    ['GET', 'http://api.test/sandboxes?owner_id=me', null],
+    ['GET', 'http://api.test/sandboxes/s_1?owner_id=me', null],
+    ['DELETE', 'http://api.test/sandboxes/s_1?owner_id=me', null],
+    ['POST', 'http://api.test/sandboxes/s_1/attach-token', { owner_id: 'me' }],
+    ['POST', 'http://api.test/sandboxes/s_1/preview-token', { owner_id: 'me', port: 3000 }],
   ])
+  expect(new Set(calls.map((c) => c.auth))).toEqual(new Set(['Bearer secret']))
+  // No byte proxy: a path the document does not name is a 404 here, not a call there.
+  expect((await app.request('/api/healthz')).status).toBe(404)
+  expect(calls).toHaveLength(8)
 })
 
 test('an unreachable API is a 502 that names it, not an internal error', async () => {

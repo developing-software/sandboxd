@@ -34,8 +34,11 @@ type Stream struct {
 	rest []byte
 
 	// open resolves a port.dial: closed on port.open, and on port.error with dialErr set.
-	open    chan struct{}
-	dialErr error
+	// The host names the stream, so it can answer one twice; openOnce is what keeps a
+	// second answer from closing this channel again.
+	open     chan struct{}
+	openOnce sync.Once
+	dialErr  error
 
 	once sync.Once
 	done chan struct{}
@@ -182,10 +185,15 @@ func (s *Stream) finish() {
 	s.once.Do(func() { close(s.done) })
 }
 
-// opened resolves a pending dial. err is nil for port.open, set for port.error.
+// opened resolves a pending dial. err is nil for port.open, set for port.error. The first
+// answer wins, and a later one is dropped: the worker is a peer we do not control, and
+// two answers for one stream would otherwise close this channel twice and panic the
+// socket's read goroutine.
 func (s *Stream) opened(err error) {
-	s.dialErr = err
-	close(s.open)
+	s.openOnce.Do(func() {
+		s.dialErr = err
+		close(s.open)
+	})
 }
 
 // awaitOpen blocks until the host answers a port.dial, the stream or the socket dies, or

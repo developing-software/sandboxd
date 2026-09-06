@@ -17,9 +17,10 @@ Two halves, composed in `src/main.ts` by one `Bun.serve`:
   `/` redirects to the list. What they share: `shell.ts` (nav, owner id, polling),
   `client.ts` (JSON over `/api`), `format.ts` (how a sandbox reads), `term.ts` (xterm.js
   on the attach socket), `style.css`.
-- **The API**, `src/api.ts` — Hono under `/api`: `GET /api/presets`,
-  `POST /api/sandboxes`, and a forwarder for everything else that adds the service token.
-  The browser never holds the token.
+- **The API**, `src/api.ts` — Hono under `/api`, one generated SDK call per route.
+  `GET /api/presets` is the one route the control plane does not have, and
+  `POST /api/sandboxes` the one with work of its own: it resolves a preset first. The
+  browser never holds the token.
 
 And the rest:
 
@@ -31,13 +32,14 @@ And the rest:
 
 ## Rules
 
-- **Typed calls go through `@sandboxd/sdk`; the rest is a byte proxy.** `POST /sandboxes`
-  is the one request this app builds, so it uses the SDK's `createSandbox` and its
-  `CreateSandbox` type. Everything else is forwarded with `fetch`, status and body
-  untouched — a proxy has no opinion about shapes, and typing them would only rot.
-  A type this app needs comes from the SDK; never re-declare one here. A page reads a
-  response as the SDK's view type (`HostView`, `SandboxView`, …) — a type-only import,
-  so no SDK code reaches the browser.
+- **Every call to the control plane is a generated SDK function.** `listHosts`,
+  `approveHost`, `getSandbox`, `mintAttachToken`, … — never `fetch` against a URL this
+  app spelled itself, and no byte proxy: a path the document does not name is a 404
+  here. This is what makes the app the proof that the document is usable — a route the
+  SDK cannot express is a gap in the document, and the place to fix it is the Go handler.
+  The API's answer goes back status and body untouched. A type this app needs comes from
+  the SDK; never re-declare one here. A page reads a response as the SDK's view type
+  (`HostView`, `SandboxView`, …) — a type-only import, so no SDK code reaches the browser.
 - **A page URL is never a JSON URL.** Pages are `Bun.serve` routes; JSON is `/api/*`.
   A new kind of data is a new `/api` route, not a page that answers both.
 - **Validation of what the API owns stays in the API.** This app checks what only it can

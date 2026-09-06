@@ -1,7 +1,7 @@
 {
   "name": "@sandboxd/sdk",
   "version": "0.1.0",
-  "description": "The typed TypeScript client for the sandboxd control plane, generated from openapi.json by hey-api.",
+  "description": "The typed TypeScript client for the sandboxd control plane, generated from api/client.yaml by hey-api.",
   "files": [
     "src"
   ],

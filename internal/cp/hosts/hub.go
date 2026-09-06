@@ -72,7 +72,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 		if typ == websocket.MessageBinary {
 			id, payload, err := wire.Decode(data)
 			if err != nil {
-				h.log.Warn("unusable binary frame", "host_id", c.hostID, "err", err)
+				h.log.Warn("unusable binary frame", "host_id", c.HostID(), "err", err)
 				continue
 			}
 			// The payload aliases the read buffer, and a WebSocket read allocates a fresh
@@ -82,11 +82,11 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 		}
 		msg, err := wire.ParseFromHost(data)
 		if err != nil {
-			h.log.Warn("unusable control message", "host_id", c.hostID, "err", err)
+			h.log.Warn("unusable control message", "host_id", c.HostID(), "err", err)
 			continue
 		}
 		if err := h.onMessage(ctx, c, msg); err != nil {
-			h.log.Error("host message", "host_id", c.hostID, "err", err)
+			h.log.Error("host message", "host_id", c.HostID(), "err", err)
 		}
 	}
 }
@@ -95,21 +95,22 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) finish(c *Conn) {
 	c.shutdown()
 	c.closeAll()
-	if c.hostID == "" {
+	hostID := c.HostID()
+	if hostID == "" {
 		h.log.Info("worker disconnected before hello")
 		return
 	}
 	h.mu.Lock()
-	live := h.conns[c.hostID] == c
+	live := h.conns[hostID] == c
 	if live {
-		delete(h.conns, c.hostID)
+		delete(h.conns, hostID)
 	}
-	if h.pending[c.hostID] == c {
-		delete(h.pending, c.hostID)
+	if h.pending[hostID] == c {
+		delete(h.pending, hostID)
 	}
 	h.mu.Unlock()
 	if live {
-		h.log.Warn("host offline", "host_id", c.hostID)
+		h.log.Warn("host offline", "host_id", hostID)
 	}
 }
 
@@ -125,10 +126,10 @@ func (h *Hub) onMessage(ctx context.Context, c *Conn, msg wire.FromHost) error {
 	switch m := msg.(type) {
 	case *wire.Heartbeat:
 		c.setCapacity(m.Running, m.Max)
-		if err := h.store.TouchHost(c.hostID, store.HostPatch{MaxSandboxes: &m.Max}); err != nil {
+		if err := h.store.TouchHost(c.HostID(), store.HostPatch{MaxSandboxes: &m.Max}); err != nil {
 			return err
 		}
-		h.emit(ctx, cp.Heartbeat{HostID: c.hostID})
+		h.emit(ctx, cp.Heartbeat{HostID: c.HostID()})
 	case *wire.SandboxStarted:
 		h.emit(ctx, cp.SandboxStarted{SID: m.SID})
 	case *wire.SandboxEnded:
@@ -144,7 +145,7 @@ func (h *Hub) onHello(ctx context.Context, c *Conn, hello *wire.Hello) error {
 	if err != nil {
 		return fmt.Errorf("hosts: enroll %s: %w", hello.Name, err)
 	}
-	c.hostID = e.host.ID
+	c.setHostID(e.host.ID)
 
 	switch e.kind {
 	case rejected:
@@ -223,12 +224,13 @@ func (h *Hub) emit(ctx context.Context, e cp.Event) {
 }
 
 func (h *Hub) isLive(c *Conn) bool {
-	if c.hostID == "" {
+	hostID := c.HostID()
+	if hostID == "" {
 		return false
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.conns[c.hostID] == c
+	return h.conns[hostID] == c
 }
 
 func (h *Hub) conn(hostID string) *Conn {

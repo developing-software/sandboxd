@@ -1,6 +1,10 @@
-// The public surface of @sandboxd/sdk. Everything under ./generated is written by
-// hey-api from openapi.json; this file is the hand-written half, and it is the only place
-// that decides what a caller sees.
+// The public surface of @sandboxd/sdk. Everything under ./generated is written by hey-api
+// from api/client.yaml; this file is the hand-written half, and it is the only place that
+// decides what a caller sees.
+//
+// The operator surface is a second document with no published client (DESIGN.md decision
+// 27), so nothing here enrols a worker or lists the fleet. A tool that operates a fleet
+// generates its own types from api/admin.yaml, which is what lets that document break.
 import { type Client, createClient, createConfig } from './generated/client'
 import type { ClientOptions } from './generated/types.gen'
 
@@ -19,7 +23,9 @@ export interface SandboxdOptions {
  * is a convenience for a script and a trap for a server.
  *
  * The token belongs on a server. Everything here is service-token gated, so a browser
- * that held one could create sandboxes for any owner.
+ * that held one could create sandboxes for any owner. Every call also carries the owner
+ * it acts for, in the `X-Sandboxd-Owner` header — the token says which app is calling,
+ * the header says which of its users for.
  */
 export function createSandboxd(o: SandboxdOptions): Client {
   return createClient(
@@ -31,36 +37,28 @@ export function createSandboxd(o: SandboxdOptions): Client {
   )
 }
 
-// `attach` is generated but deliberately not exported: GET /attach is a WebSocket
-// upgrade, and a fetch against it can only fail. Mint a token with mintAttachToken and
-// open the `wss_url` it returns.
+// `attachTerminal` is generated but deliberately not exported: GET on the terminal path is
+// a WebSocket upgrade, and a fetch against it can only fail. Call `openTerminal` and open
+// the `url` it returns from a browser — the credential is already in it.
 export {
-  approveHost,
   createSandbox,
   endSandbox,
   getSandbox,
   healthz,
-  listHosts,
   listSandboxes,
-  mintAttachToken,
-  mintPreviewToken,
+  openPreview,
+  openTerminal,
   type Options,
-  revokeHost,
 } from './generated/sdk.gen'
 
 export type { Client, Config } from './generated/client'
 
 export type {
-  ApproveBody,
-  AttachToken,
-  Capacity,
   CreateSandbox,
   ErrorModel,
-  HostView,
+  Health,
   Issue,
-  Ok,
-  OwnerBody,
+  Link,
   PreviewBody,
-  PreviewToken,
   SandboxView,
 } from './generated/types.gen'

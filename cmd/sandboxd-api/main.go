@@ -69,9 +69,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go sched.Run(ctx)
 
 	sandboxes := cp.NewSandboxes(cfg, st, hub, sched, tokens)
-	handler := cphttp.New(cphttp.Deps{
+	handler, err := cphttp.New(cphttp.Deps{
 		ServiceToken: cfg.ServiceToken,
-		PublicURL:    cfg.PublicURL,
 		Tokens:       tokens,
 		Sandboxes:    sandboxes,
 		Hosts:        hosts.NewService(st, hub, log),
@@ -80,6 +79,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Tunnel:       hub.Serve,
 		Log:          log,
 	})
+	if err != nil {
+		return fmt.Errorf("routes: %w", err)
+	}
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),

@@ -1,0 +1,421 @@
+# The sandboxd control plane's client contract, and the source both generators read.
+#
+#   internal/openapi              ogen's server and types  (go generate ./...)
+#   sdk/typescript/src/generated  hey-api's client         (bun run generate)
+#
+# Both are checked in and CI regenerates each and fails on a diff, so the two can only be
+# current (DESIGN.md decision 22). This file is written by hand; nothing renders it.
+#
+# This is the document that is a promise: a published SDK comes from it and parent apps
+# are written against it, so it changes carefully. The operator surface — enrolling
+# workers, looking at the fleet — lives in api/admin.yaml instead, has no published
+# client, and is free to break (decision 27).
+#
+# What is deliberately not here:
+#   GET /hosts…   the operator surface, in api/admin.yaml.
+#   GET /tunnel   the worker's WebSocket. It speaks the wire protocol in DESIGN.md, not
+#                 this API, and no client has business calling it.
+#
+# GET /sandboxes/{id}/terminal is here but net/http takes the route before ogen's router
+# sees it: a WebSocket upgrade has no ResponseWriter to hand a generated handler.
+#
+# Errors: every operation answers `default` with an ErrorModel, and nothing enumerates
+# per-status response types. The status is chosen in one place — cp/http's error mapping,
+# the only place in the control plane that knows one — so a use case returns a sentinel
+# and never a code. Where a status carries meaning a caller should plan for, the
+# operation's description says so in prose.
+
+openapi: 3.1.0
+
+info:
+  title: sandboxd control plane
+  version: '1.0.0'
+  description: >-
+    Generic sandboxes on your own hosts. Presets, repos and agents are a client concern
+    and reach this API as an image, a command, env and tags.
+
+servers:
+  # What the checked-in document advertises. A deployed control plane serves its own at
+  # /openapi.yaml with SANDBOXD_PUBLIC_URL in this slot; generators take the base URL
+  # from their caller.
+  - url: http://localhost:8080
+
+# The parent app's credential, on everything except the terminal socket below, which
+# carries its own. api/admin.yaml declares the same scheme today; giving the operator
+# surface its own token is a change there and not here (decision 27).
+security:
+  - Bearer: []
+
+tags:
+  - name: Sandboxes
+    description: The resource the product makes. Everything here is scoped to one owner.
+  - name: Service
+    description: The liveness probe.
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness
+      tags: [Service]
+      security: []
+      responses:
+        '200':
+          description: The process is up.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        # Carried here too, even though a probe has little to say: ogen's typed error path
+        # is all-or-nothing across the document, and one operation without it turns the
+        # whole thing off.
+        default: { $ref: '#/components/responses/Error' }
+
+  /sandboxes:
+    post:
+      operationId: create-sandbox
+      summary: Create a sandbox
+      description: >-
+        Presets are resolved before this call, by the client: the body names an image, a
+        command, env and the host tags it needs. Answers 422 when no approved host can
+        ever carry the required tags — a requirement the fleet is merely too full for
+        queues instead, and the sandbox comes back `queued` with a `queue_position`.
+      tags: [Sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/Owner'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSandbox' }
+      responses:
+        '201':
+          description: Placed on a host, or queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SandboxView' }
+        default: { $ref: '#/components/responses/Error' }
+
+    get:
+      operationId: list-sandboxes
+      summary: List sandboxes
+      description: >-
+        This owner's sandboxes, newest first. There is no unscoped listing: the owner
+        header is required on every route here, so no call can widen to the whole fleet by
+        omitting something.
+      tags: [Sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/Owner'
+      responses:
+        '200':
+          description: This owner's sandboxes, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SandboxView' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sandboxes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/SandboxID'
+      - $ref: '#/components/parameters/Owner'
+
+    get:
+      operationId: get-sandbox
+      summary: Get a sandbox
+      description: >-
+        404 both when there is no such sandbox and when it belongs to another owner: the
+        two are deliberately indistinguishable.
+      tags: [Sandboxes]
+      responses:
+        '200':
+          description: The sandbox.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SandboxView' }
+        default: { $ref: '#/components/responses/Error' }
+
+    delete:
+      operationId: end-sandbox
+      summary: End a sandbox
+      description: >-
+        Returns the sandbox as it stands: already `ended` when it was queued or its host is
+        gone, still `running` while its host is being told.
+      tags: [Sandboxes]
+      responses:
+        '200':
+          description: The sandbox, as it stands after being told to stop.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SandboxView' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # One path for the terminal, two methods: the parent app POSTs to get a link, the
+  # browser GETs that link and is upgraded. The token in the query is the whole gate on
+  # the GET — a browser holds neither the service token nor the owner header, and a
+  # WebSocket cannot carry either as a header anyway.
+  /sandboxes/{id}/terminal:
+    post:
+      operationId: open-terminal
+      summary: Open a terminal
+      description: >-
+        Returns the URL to attach to, good for 60 s and scoped to this one sandbox. Hand it
+        to a browser. 409 while the sandbox is not `running` — there is no PTY yet.
+      tags: [Sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/SandboxID'
+        - $ref: '#/components/parameters/Owner'
+      responses:
+        '201':
+          description: A short-lived `wss://` URL for one terminal on one sandbox.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Link' }
+        default: { $ref: '#/components/responses/Error' }
+
+    get:
+      operationId: attach-terminal
+      summary: Attach to the terminal
+      description: >-
+        The socket itself, and the one operation here the generated router does not serve:
+        an upgrade has no ResponseWriter to hand a handler, so net/http takes the route
+        first. Binary frames are raw PTY bytes both ways; text frames are JSON — the client
+        sends {type:"resize",cols,rows}, the server sends {type:"closed",reason}.
+      tags: [Sandboxes]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SandboxID'
+        - name: token
+          in: query
+          required: true
+          description: The token embedded in the URL that POST to this path returned.
+          schema: { type: string }
+        - name: cols
+          in: query
+          description: Terminal width in cells. Default 120.
+          schema: { type: integer, minimum: 1 }
+        - name: rows
+          in: query
+          description: Terminal height in cells. Default 40.
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '101':
+          description: 'WebSocket: binary frames are PTY bytes both ways.'
+        default: { $ref: '#/components/responses/Error' }
+
+  /sandboxes/{id}/preview:
+    post:
+      operationId: open-preview
+      summary: Open a preview
+      description: >-
+        Returns the URL a port inside the sandbox is reachable at, good for 10 min. Hand it
+        to a browser: the first request there trades the token in the URL for a
+        subdomain-scoped cookie and redirects to a clean address, so the token does not
+        stay in the address bar. The preview itself is served from
+        `<port>-<sid>.<preview domain>`, not from this API.
+      tags: [Sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/SandboxID'
+        - $ref: '#/components/parameters/Owner'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewBody' }
+      responses:
+        '201':
+          description: A short-lived URL for one port in one sandbox.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Link' }
+        default: { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    Bearer:
+      type: http
+      scheme: bearer
+      description: SANDBOXD_SERVICE_TOKEN. The parent app holds it; a browser never does.
+
+  parameters:
+    # The owner travels beside the token rather than in the body or the query string: it
+    # narrows the service token rather than describing the request, and the control plane
+    # has no user table, so this header is the whole ownership model (decision 24).
+    Owner:
+      name: X-Sandboxd-Owner
+      in: header
+      required: true
+      description: >-
+        The parent app's user. Every call about a sandbox must present the same value the
+        sandbox was created with; one that does not is answered as if the sandbox did not
+        exist.
+      schema: { type: string, minLength: 1, examples: [user_42] }
+
+    SandboxID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, examples: [s_ab12cd34] }
+
+  responses:
+    # One error response for every operation. Declaring it as `default` is also what turns
+    # on ogen's typed error path: the handler returns a Go error and one mapping function
+    # turns it into a status.
+    Error:
+      description: >-
+        Every failure. `error` is the first problem in prose; `issues` names each failing
+        field when the request did not validate.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorModel' }
+
+  schemas:
+    # --- requests ---------------------------------------------------------------------
+
+    # Unknown keys are refused rather than ignored: a `repo` or `preset` sent here means
+    # the caller meant their own client, and silence would hide it until the sandbox
+    # started without them.
+    CreateSandbox:
+      type: object
+      additionalProperties: false
+      required: [image]
+      properties:
+        image:
+          type: string
+          minLength: 1
+          examples: [sandboxd-coding-agent:latest]
+        cmd:
+          type: array
+          minItems: 1
+          items: { type: string }
+          description: Exec'd in the PTY. Omit for the image's own default entry.
+        idle_timeout_s:
+          type: integer
+          minimum: 60
+          description: Ended after this long without PTY traffic in either direction. Default 1800.
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: Persisted, and visible in the API.
+        secret_env:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Forwarded to the worker and never persisted or shown. The only place a secret
+            travels; no row ever holds one.
+        tags:
+          type: array
+          items: { type: string }
+          description: >-
+            Host tags this sandbox requires. Only hosts carrying all of them are
+            candidates. TERM and SANDBOXD_SESSION_ID are reserved env names and are
+            refused in either map.
+
+    PreviewBody:
+      type: object
+      additionalProperties: false
+      required: [port]
+      properties:
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: The port inside the sandbox to expose.
+
+    # --- responses --------------------------------------------------------------------
+
+    # Every list and map below is required and non-null, and never absent: a generated
+    # client should not have to unwrap `T[] | null` for a field the API always sends
+    # (decision 23).
+    SandboxView:
+      type: object
+      additionalProperties: false
+      required:
+        [id, owner_id, status, host_id, host_online, queue_position, ended_reason,
+         ended_detail, image, cmd, env, tags, idle_timeout_s, created_at, started_at,
+         ended_at]
+      properties:
+        id: { type: string, examples: [s_ab12cd34] }
+        owner_id: { type: string }
+        status:
+          type: string
+          enum: [queued, creating, running, ended]
+        host_id:
+          type: [string, 'null']
+          description: Null until the sandbox is placed.
+        host_online:
+          type: [boolean, 'null']
+          description: Live, not stored. Null while the sandbox has no host.
+        queue_position:
+          type: [integer, 'null']
+          description: 1-based, and only while queued.
+        # `null` is listed among the values because the field is nullable: an enum that
+        # omitted it would forbid the very value the type allows, and a generator believes
+        # the enum (decision 23).
+        ended_reason:
+          type: [string, 'null']
+          enum: [closed, idle, failed, lost, exited, null]
+        ended_detail: { type: [string, 'null'] }
+        image: { type: string }
+        cmd:
+          type: array
+          items: { type: string }
+          description: Empty means the image's own default entry.
+        env:
+          type: object
+          additionalProperties: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+          description: What this sandbox requires, not what its host carries.
+        idle_timeout_s: { type: integer }
+        created_at: { type: integer, format: int64, description: Unix milliseconds. }
+        started_at: { type: [integer, 'null'], format: int64 }
+        ended_at: { type: [integer, 'null'], format: int64 }
+
+    # One shape for both capabilities. The token is embedded in the URL rather than
+    # returned beside it: a caller's only move is to hand the URL to a browser, and a bare
+    # token was a field every client had to ignore.
+    Link:
+      type: object
+      additionalProperties: false
+      required: [url, expires_in_s]
+      properties:
+        url:
+          type: string
+          description: Open this from the browser. It carries its own credential.
+        expires_in_s:
+          type: integer
+          description: How long the URL stays good. Mint another when it lapses.
+
+    # A real boolean rather than `enum: [true]`: the probe is the one place worth having
+    # room to say more than "up" later (decision 25).
+    Health:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+
+    ErrorModel:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: The first problem, in prose.
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/Issue' }
+          description: Every failing field, for validation errors.
+
+    Issue:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        path:
+          type: string
+          description: The field a caller has to fix, as they sent it.
+        message: { type: string }

@@ -1,0 +1,20 @@
+# ogen's feature set, shared by both documents. Everything here is a subtraction: the
+# defaults generate about 4,500 lines and pull three modules we have no use for, and the
+# generated tree is checked in, so what is off costs nothing and what is on is read.
+#
+#   paths/client        we consume this API from TypeScript, not from Go. The Go client
+#                       would be a second, untested way to call ourselves.
+#   ogen/otel           the API binary has no tracer. Leaving it on links the whole
+#                       OpenTelemetry SDK into a process that never emits a span.
+#   ogen/unimplemented  stub methods that answer 501. With them, a Handler missing a
+#                       method still compiles — and the compiler noticing is the reason
+#                       to generate the interface at all.
+#
+# webhooks/{client,server} stay on their defaults: neither document declares a webhook, so
+# they generate nothing either way.
+generator:
+  features:
+    disable:
+      - paths/client
+      - ogen/otel
+      - ogen/unimplemented

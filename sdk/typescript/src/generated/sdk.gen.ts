@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ApproveHostData, ApproveHostErrors, ApproveHostResponses, AttachData, AttachErrors, CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, EndSandboxData, EndSandboxErrors, EndSandboxResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, HealthzData, HealthzErrors, HealthzResponses, ListHostsData, ListHostsErrors, ListHostsResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, MintAttachTokenData, MintAttachTokenErrors, MintAttachTokenResponses, MintPreviewTokenData, MintPreviewTokenErrors, MintPreviewTokenResponses, RevokeHostData, RevokeHostErrors, RevokeHostResponses } from './types.gen';
+import type { AttachTerminalData, AttachTerminalErrors, AttachTerminalResponses, CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, EndSandboxData, EndSandboxErrors, EndSandboxResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, HealthzData, HealthzErrors, HealthzResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, OpenPreviewData, OpenPreviewErrors, OpenPreviewResponses, OpenTerminalData, OpenTerminalErrors, OpenTerminalResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -19,60 +19,16 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 };
 
 /**
- * Attach to a sandbox terminal
- *
- * Browser endpoint. `token` comes from POST /sandboxes/{id}/attach-token. Binary frames are raw PTY bytes both ways; text frames are JSON — the client sends {type:"resize",cols,rows}, the server sends {type:"closed",reason}.
- */
-export const attach = <ThrowOnError extends boolean = false>(options: Options<AttachData, ThrowOnError>): RequestResult<unknown, AttachErrors, ThrowOnError> => (options.client ?? client).get<unknown, AttachErrors, ThrowOnError>({ url: '/attach', ...options });
-
-/**
  * Liveness
  */
 export const healthz = <ThrowOnError extends boolean = false>(options?: Options<HealthzData, ThrowOnError>): RequestResult<HealthzResponses, HealthzErrors, ThrowOnError> => (options?.client ?? client).get<HealthzResponses, HealthzErrors, ThrowOnError>({ url: '/healthz', ...options });
 
 /**
- * List hosts
- *
- * Every enrolled host, with what it reported about itself.
- */
-export const listHosts = <ThrowOnError extends boolean = false>(options?: Options<ListHostsData, ThrowOnError>): RequestResult<ListHostsResponses, ListHostsErrors, ThrowOnError> => (options?.client ?? client).get<ListHostsResponses, ListHostsErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/hosts',
-    ...options
-});
-
-/**
- * Approve a pending host
- *
- * A worker started with the operator's join token skips this and is approved on hello.
- */
-export const approveHost = <ThrowOnError extends boolean = false>(options: Options<ApproveHostData, ThrowOnError>): RequestResult<ApproveHostResponses, ApproveHostErrors, ThrowOnError> => (options.client ?? client).post<ApproveHostResponses, ApproveHostErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/hosts/{id}/approve',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Revoke a host
- *
- * The host is rejected on its next hello, and on the socket it is holding now.
- */
-export const revokeHost = <ThrowOnError extends boolean = false>(options: Options<RevokeHostData, ThrowOnError>): RequestResult<RevokeHostResponses, RevokeHostErrors, ThrowOnError> => (options.client ?? client).post<RevokeHostResponses, RevokeHostErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/hosts/{id}/revoke',
-    ...options
-});
-
-/**
  * List sandboxes
  *
- * Newest first.
+ * This owner's sandboxes, newest first. There is no unscoped listing: the owner header is required on every route here, so no call can widen to the whole fleet by omitting something.
  */
-export const listSandboxes = <ThrowOnError extends boolean = false>(options?: Options<ListSandboxesData, ThrowOnError>): RequestResult<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError> => (options?.client ?? client).get<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError>({
+export const listSandboxes = <ThrowOnError extends boolean = false>(options: Options<ListSandboxesData, ThrowOnError>): RequestResult<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError> => (options.client ?? client).get<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/sandboxes',
     ...options
@@ -81,7 +37,7 @@ export const listSandboxes = <ThrowOnError extends boolean = false>(options?: Op
 /**
  * Create a sandbox
  *
- * Presets are resolved before this call, by the client: the body names an image, a command, env and the host tags it needs.
+ * Presets are resolved before this call, by the client: the body names an image, a command, env and the host tags it needs. Answers 422 when no approved host can ever carry the required tags — a requirement the fleet is merely too full for queues instead, and the sandbox comes back `queued` with a `queue_position`.
  */
 export const createSandbox = <ThrowOnError extends boolean = false>(options: Options<CreateSandboxData, ThrowOnError>): RequestResult<CreateSandboxResponses, CreateSandboxErrors, ThrowOnError> => (options.client ?? client).post<CreateSandboxResponses, CreateSandboxErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -96,7 +52,7 @@ export const createSandbox = <ThrowOnError extends boolean = false>(options: Opt
 /**
  * End a sandbox
  *
- * Returns the sandbox as it stands: ended, or ending while its host is told.
+ * Returns the sandbox as it stands: already `ended` when it was queued or its host is gone, still `running` while its host is being told.
  */
 export const endSandbox = <ThrowOnError extends boolean = false>(options: Options<EndSandboxData, ThrowOnError>): RequestResult<EndSandboxResponses, EndSandboxErrors, ThrowOnError> => (options.client ?? client).delete<EndSandboxResponses, EndSandboxErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -106,6 +62,8 @@ export const endSandbox = <ThrowOnError extends boolean = false>(options: Option
 
 /**
  * Get a sandbox
+ *
+ * 404 both when there is no such sandbox and when it belongs to another owner: the two are deliberately indistinguishable.
  */
 export const getSandbox = <ThrowOnError extends boolean = false>(options: Options<GetSandboxData, ThrowOnError>): RequestResult<GetSandboxResponses, GetSandboxErrors, ThrowOnError> => (options.client ?? client).get<GetSandboxResponses, GetSandboxErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -114,28 +72,31 @@ export const getSandbox = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
- * Mint an attach token
+ * Attach to the terminal
  *
- * Good for 60 s. Open wss_url from the browser.
+ * The socket itself, and the one operation here the generated router does not serve: an upgrade has no ResponseWriter to hand a handler, so net/http takes the route first. Binary frames are raw PTY bytes both ways; text frames are JSON — the client sends {type:"resize",cols,rows}, the server sends {type:"closed",reason}.
  */
-export const mintAttachToken = <ThrowOnError extends boolean = false>(options: Options<MintAttachTokenData, ThrowOnError>): RequestResult<MintAttachTokenResponses, MintAttachTokenErrors, ThrowOnError> => (options.client ?? client).post<MintAttachTokenResponses, MintAttachTokenErrors, ThrowOnError>({
+export const attachTerminal = <ThrowOnError extends boolean = false>(options: Options<AttachTerminalData, ThrowOnError>): RequestResult<AttachTerminalResponses, AttachTerminalErrors, ThrowOnError> => (options.client ?? client).get<AttachTerminalResponses, AttachTerminalErrors, ThrowOnError>({ url: '/sandboxes/{id}/terminal', ...options });
+
+/**
+ * Open a terminal
+ *
+ * Returns the URL to attach to, good for 60 s and scoped to this one sandbox. Hand it to a browser. 409 while the sandbox is not `running` — there is no PTY yet.
+ */
+export const openTerminal = <ThrowOnError extends boolean = false>(options: Options<OpenTerminalData, ThrowOnError>): RequestResult<OpenTerminalResponses, OpenTerminalErrors, ThrowOnError> => (options.client ?? client).post<OpenTerminalResponses, OpenTerminalErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes/{id}/attach-token',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
+    url: '/sandboxes/{id}/terminal',
+    ...options
 });
 
 /**
- * Mint a preview token
+ * Open a preview
  *
- * Good for 10 min. Open url from the browser; it sets the preview cookie and redirects.
+ * Returns the URL a port inside the sandbox is reachable at, good for 10 min. Hand it to a browser: the first request there trades the token in the URL for a subdomain-scoped cookie and redirects to a clean address, so the token does not stay in the address bar. The preview itself is served from `<port>-<sid>.<preview domain>`, not from this API.
  */
-export const mintPreviewToken = <ThrowOnError extends boolean = false>(options: Options<MintPreviewTokenData, ThrowOnError>): RequestResult<MintPreviewTokenResponses, MintPreviewTokenErrors, ThrowOnError> => (options.client ?? client).post<MintPreviewTokenResponses, MintPreviewTokenErrors, ThrowOnError>({
+export const openPreview = <ThrowOnError extends boolean = false>(options: Options<OpenPreviewData, ThrowOnError>): RequestResult<OpenPreviewResponses, OpenPreviewErrors, ThrowOnError> => (options.client ?? client).post<OpenPreviewResponses, OpenPreviewErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes/{id}/preview-token',
+    url: '/sandboxes/{id}/preview',
     ...options,
     headers: {
         'Content-Type': 'application/json',

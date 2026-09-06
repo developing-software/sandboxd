@@ -15,19 +15,26 @@ import (
 
 	"github.com/coder/websocket"
 
+	"sandboxd/api"
+	"sandboxd/internal/adminapi"
 	"sandboxd/internal/cp"
 	"sandboxd/internal/cp/attach"
 	"sandboxd/internal/cp/hosts"
 	"sandboxd/internal/cp/preview"
 	"sandboxd/internal/cp/store"
+	"sandboxd/internal/openapi"
 )
 
 // The whole control plane behind an httptest.Server, with no worker connected: every
 // dependency is the real one, which is what makes the status codes worth asserting.
 
-const serviceToken = "secret"
+const (
+	serviceToken = "secret"
+	// owner is the value the X-Sandboxd-Owner header carries unless a test says otherwise.
+	owner = "me"
+)
 
-type api struct {
+type harness struct {
 	t      *testing.T
 	ctx    context.Context
 	srv    *httptest.Server
@@ -37,7 +44,7 @@ type api struct {
 	svc    *cp.Sandboxes
 }
 
-func newAPI(t *testing.T) *api {
+func newHarness(t *testing.T) *harness {
 	t.Helper()
 	log := slog.New(slog.DiscardHandler)
 	st, err := store.Open(":memory:", log)
@@ -60,9 +67,8 @@ func newAPI(t *testing.T) *api {
 	go sched.Run(ctx)
 
 	svc := cp.NewSandboxes(cfg, st, hub, sched, tokens)
-	srv := httptest.NewServer(New(Deps{
+	handler, err := New(Deps{
 		ServiceToken: cfg.ServiceToken,
-		PublicURL:    cfg.PublicURL,
 		Tokens:       tokens,
 		Sandboxes:    svc,
 		Hosts:        hosts.NewService(st, hub, log),
@@ -70,10 +76,14 @@ func newAPI(t *testing.T) *api {
 		Preview:      preview.NewProxy(svc, hub, tokens, cfg.PreviewDomain, log),
 		Tunnel:       hub.Serve,
 		Log:          log,
-	}))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	return &api{t: t, ctx: ctx, srv: srv, store: st, hub: hub, tokens: tokens, svc: svc}
+	return &harness{t: t, ctx: ctx, srv: srv, store: st, hub: hub, tokens: tokens, svc: svc}
 }
 
 // response is a finished exchange: the body is already read and the socket returned to
@@ -84,34 +94,41 @@ type response struct {
 	body   []byte
 }
 
-// do sends a request with the service token unless told otherwise.
-func (a *api) do(method, path string, body any, headers ...string) response {
-	a.t.Helper()
+// do sends a request with the service token and the owner header unless told otherwise.
+// An empty value in `headers` removes a header rather than blanking it, which is how a
+// test asks what happens when a caller sends none.
+func (h *harness) do(method, path string, body any, headers ...string) response {
+	h.t.Helper()
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			a.t.Fatal(err)
+			h.t.Fatal(err)
 		}
 		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(a.ctx, method, a.srv.URL+path, reader)
+	req, err := http.NewRequestWithContext(h.ctx, method, h.srv.URL+path, reader)
 	if err != nil {
-		a.t.Fatal(err)
+		h.t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+serviceToken)
+	req.Header.Set("X-Sandboxd-Owner", owner)
 	for i := 0; i+1 < len(headers); i += 2 {
+		if headers[i+1] == "" {
+			req.Header.Del(headers[i])
+			continue
+		}
 		req.Header.Set(headers[i], headers[i+1])
 	}
-	res, err := a.srv.Client().Do(req)
+	res, err := h.srv.Client().Do(req)
 	if err != nil {
-		a.t.Fatal(err)
+		h.t.Fatal(err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
-		a.t.Fatal(err)
+		h.t.Fatal(err)
 	}
 	return response{path: path, status: res.StatusCode, body: raw}
 }
@@ -134,34 +151,40 @@ type failure struct {
 }
 
 func TestAuth(t *testing.T) {
-	a := newAPI(t)
+	h := newHarness(t)
 
-	// The probe and the document are open.
-	for _, path := range []string{"/healthz", "/openapi.json", "/doc"} {
-		res := a.do(http.MethodGet, path, nil, "Authorization", "")
+	// What the two documents mark `security: []`, plus the pages that describe them.
+	for _, path := range []string{"/healthz", "/openapi.yaml", "/openapi.admin.yaml", "/doc"} {
+		res := h.do(http.MethodGet, path, nil, "Authorization", "")
 		if res.status != http.StatusOK {
 			t.Errorf("GET %s = %d, want it open", path, res.status)
 		}
 	}
-	if got := decode[map[string]any](t, a.do(http.MethodGet, "/healthz", nil)); got["ok"] != true {
+	if got := decode[map[string]any](t, h.do(http.MethodGet, "/healthz", nil)); got["ok"] != true {
 		t.Errorf("healthz = %v", got)
 	}
 
-	// Everything the parent app owns is not.
+	// Everything the parent app and the operator own is not, in either document.
 	for _, path := range []string{"/sandboxes", "/hosts"} {
-		if res := a.do(http.MethodGet, path, nil, "Authorization", ""); res.status != 401 {
+		if res := h.do(http.MethodGet, path, nil, "Authorization", ""); res.status != 401 {
 			t.Errorf("GET %s without a token = %d", path, res.status)
 		}
-		res := a.do(http.MethodGet, path, nil, "Authorization", "Bearer nope")
+		res := h.do(http.MethodGet, path, nil, "Authorization", "Bearer nope")
 		if res.status != 401 {
 			t.Errorf("GET %s with the wrong token = %d", path, res.status)
 		}
+		// The two answers are the same sentence: the only fix for either is a different
+		// token, so neither says which mistake was made.
+		if got := decode[failure](t, res); got.Error != "unauthorized" {
+			t.Errorf("GET %s body = %+v", path, got)
+		}
 	}
-	if res := a.do(http.MethodGet, "/hosts", nil); res.status != 200 {
+	if res := h.do(http.MethodGet, "/hosts", nil); res.status != 200 {
 		t.Errorf("GET /hosts with the token = %d", res.status)
 	}
 
-	missing := a.do(http.MethodGet, "/nope", nil)
+	// A route in neither document falls past both generated routers to one 404.
+	missing := h.do(http.MethodGet, "/nope", nil)
 	if missing.status != 404 {
 		t.Fatalf("unknown route = %d", missing.status)
 	}
@@ -170,12 +193,28 @@ func TestAuth(t *testing.T) {
 	}
 }
 
-func TestCreateValidation(t *testing.T) {
-	a := newAPI(t)
+// The owner is a credential that narrows the service token, so it is required on every
+// route that scopes to one and there is no way to widen by leaving it out (decision 24).
+func TestTheOwnerHeaderIsRequiredEverywhere(t *testing.T) {
+	h := newHarness(t)
+	for _, path := range []string{"/sandboxes", "/sandboxes/s_x"} {
+		res := h.do(http.MethodGet, path, nil, "X-Sandboxd-Owner", "")
+		if res.status != 400 {
+			t.Errorf("GET %s with no owner = %d, want 400", path, res.status)
+		}
+		got := decode[failure](t, res)
+		if len(got.Issues) != 1 || got.Issues[0].Path != "X-Sandboxd-Owner" {
+			t.Errorf("GET %s issues = %+v, want the header named", path, got.Issues)
+		}
+	}
+}
 
-	empty := a.do(http.MethodPost, "/sandboxes", map[string]any{})
+func TestCreateValidation(t *testing.T) {
+	h := newHarness(t)
+
+	empty := h.do(http.MethodPost, "/sandboxes", map[string]any{})
 	if empty.status != 400 {
-		t.Fatalf("empty body = %d, want 400 rather than huma's 422", empty.status)
+		t.Fatalf("empty body = %d", empty.status)
 	}
 	got := decode[failure](t, empty)
 	var paths []string
@@ -183,11 +222,12 @@ func TestCreateValidation(t *testing.T) {
 		paths = append(paths, i.Path)
 	}
 	slices.Sort(paths)
-	if !slices.Equal(paths, []string{"image", "owner_id"}) {
+	// The owner used to be a body field; it is a header now, so `image` is all that is left.
+	if !slices.Equal(paths, []string{"image"}) {
 		t.Errorf("issues = %v, want one entry per failing field", paths)
 	}
 	// The prose is the first problem, so a client with no interest in issues has something.
-	if !strings.HasPrefix(got.Error, "image: ") && !strings.HasPrefix(got.Error, "owner_id: ") {
+	if !strings.HasPrefix(got.Error, "image: ") {
 		t.Errorf("error = %q", got.Error)
 	}
 
@@ -196,26 +236,25 @@ func TestCreateValidation(t *testing.T) {
 		want string
 	}{
 		"a preset belongs to the client": {
-			map[string]any{"owner_id": "me", "image": "i", "repo": "x"}, "repo",
+			map[string]any{"image": "i", "repo": "x"}, "repo",
 		},
 		"an empty command is not a command": {
-			map[string]any{"owner_id": "me", "image": "i", "cmd": []string{}}, "cmd",
+			map[string]any{"image": "i", "cmd": []string{}}, "cmd",
 		},
 		"below the idle floor": {
-			map[string]any{"owner_id": "me", "image": "i", "idle_timeout_s": 5}, "idle_timeout_s",
+			map[string]any{"image": "i", "idle_timeout_s": 5}, "idle_timeout_s",
 		},
 		"a reserved variable": {
-			map[string]any{"owner_id": "me", "image": "i", "env": map[string]string{"TERM": "x"}},
-			"reserved",
+			map[string]any{"image": "i", "env": map[string]string{"TERM": "x"}}, "reserved",
 		},
 		"not a variable name": {
-			map[string]any{"owner_id": "me", "image": "i", "env": map[string]string{"bad-name": "x"}},
+			map[string]any{"image": "i", "env": map[string]string{"bad-name": "x"}},
 			"invalid variable name",
 		},
 	}
 	for name, c := range bad {
 		t.Run(name, func(t *testing.T) {
-			res := a.do(http.MethodPost, "/sandboxes", c.body)
+			res := h.do(http.MethodPost, "/sandboxes", c.body)
 			if res.status != 400 {
 				t.Fatalf("= %d", res.status)
 			}
@@ -227,76 +266,81 @@ func TestCreateValidation(t *testing.T) {
 }
 
 func TestSandboxLifecycle(t *testing.T) {
-	a := newAPI(t)
+	h := newHarness(t)
 
-	created := a.do(http.MethodPost, "/sandboxes", map[string]any{
-		"owner_id":   "me",
+	created := h.do(http.MethodPost, "/sandboxes", map[string]any{
 		"image":      "img:1",
 		"cmd":        []string{"bash", "-l"},
 		"env":        map[string]string{"A": "1"},
 		"secret_env": map[string]string{"S": "0-secret-0"},
 	})
 	if created.status != 201 {
-		t.Fatalf("create = %d", created.status)
+		t.Fatalf("create = %d: %s", created.status, created.body)
 	}
-	v := decode[cp.SandboxView](t, created)
-	if v.Status != store.Queued {
+	v := decode[openapi.SandboxView](t, created)
+	if v.Status != openapi.SandboxViewStatusQueued {
 		t.Errorf("status = %s", v.Status)
 	}
-	if raw, _ := a.store.Dump("sandboxes"); strings.Contains(raw, "0-secret-0") {
+	if v.OwnerID != owner {
+		t.Errorf("owner_id = %q, want the header's value", v.OwnerID)
+	}
+	if raw, _ := h.store.Dump("sandboxes"); strings.Contains(raw, "0-secret-0") {
 		t.Errorf("a secret reached the database:\n%s", raw)
 	}
 
-	if list := decode[[]cp.SandboxView](t, a.do(http.MethodGet, "/sandboxes?owner_id=me", nil)); len(list) != 1 {
+	if list := decode[[]openapi.SandboxView](t, h.do(http.MethodGet, "/sandboxes", nil)); len(list) != 1 {
 		t.Errorf("list = %d", len(list))
 	}
-	if list := decode[[]cp.SandboxView](t, a.do(http.MethodGet, "/sandboxes?owner_id=you", nil)); len(list) != 0 {
+	other := h.do(http.MethodGet, "/sandboxes", nil, "X-Sandboxd-Owner", "you")
+	if list := decode[[]openapi.SandboxView](t, other); len(list) != 0 {
 		t.Errorf("another owner sees %d", len(list))
 	}
 
-	codes := map[string]int{
-		"/sandboxes/" + v.ID + "?owner_id=me":  200,
-		"/sandboxes/" + v.ID + "?owner_id=you": 404,
-		"/sandboxes/" + v.ID:                   400, // owner_id is not optional here
+	if got := h.do(http.MethodGet, "/sandboxes/"+v.ID, nil).status; got != 200 {
+		t.Errorf("GET one = %d", got)
 	}
-	for path, want := range codes {
-		if got := a.do(http.MethodGet, path, nil).status; got != want {
-			t.Errorf("GET %s = %d, want %d", path, got, want)
-		}
+	if got := h.do(http.MethodGet, "/sandboxes/"+v.ID, nil, "X-Sandboxd-Owner", "you").status; got != 404 {
+		t.Errorf("another owner's sandbox = %d, want it indistinguishable from missing", got)
 	}
 
 	// A terminal needs something to attach to.
-	attachRes := a.do(http.MethodPost, "/sandboxes/"+v.ID+"/attach-token", map[string]any{"owner_id": "me"})
-	if attachRes.status != 409 {
-		t.Errorf("attach-token on a queued sandbox = %d", attachRes.status)
+	if got := h.do(http.MethodPost, "/sandboxes/"+v.ID+"/terminal", nil).status; got != 409 {
+		t.Errorf("terminal on a queued sandbox = %d", got)
 	}
 
-	previewRes := a.do(http.MethodPost, "/sandboxes/"+v.ID+"/preview-token",
-		map[string]any{"owner_id": "me", "port": 3000})
-	if previewRes.status != 200 {
-		t.Fatalf("preview-token = %d", previewRes.status)
+	previewed := h.do(http.MethodPost, "/sandboxes/"+v.ID+"/preview", map[string]any{"port": 3000})
+	if previewed.status != 201 {
+		t.Fatalf("preview = %d: %s", previewed.status, previewed.body)
 	}
-	p := decode[cp.PreviewToken](t, previewRes)
-	want := "https://3000-" + v.ID + ".preview.example.com/?t=" + p.Token
-	if p.URL != want {
-		t.Errorf("url = %q, want %q", p.URL, want)
+	link := decode[openapi.Link](t, previewed)
+	want := "https://3000-" + v.ID + ".preview.example.com/?t="
+	if !strings.HasPrefix(link.URL, want) {
+		t.Errorf("url = %q, want it to start %q", link.URL, want)
 	}
-	outOfRange := a.do(http.MethodPost, "/sandboxes/"+v.ID+"/preview-token",
-		map[string]any{"owner_id": "me", "port": 70000})
+	if link.ExpiresInS != 600 {
+		t.Errorf("expires_in_s = %d", link.ExpiresInS)
+	}
+
+	// The port range is stated once, in the document, and the generated validator is what
+	// enforces it — no use case sees an impossible port.
+	outOfRange := h.do(http.MethodPost, "/sandboxes/"+v.ID+"/preview", map[string]any{"port": 70000})
 	if outOfRange.status != 400 {
 		t.Errorf("port 70000 = %d", outOfRange.status)
 	}
+	if got := decode[failure](t, outOfRange); len(got.Issues) != 1 || got.Issues[0].Path != "port" {
+		t.Errorf("issues = %+v, want the field named", got.Issues)
+	}
 
-	ended := a.do(http.MethodDelete, "/sandboxes/"+v.ID+"?owner_id=me", nil)
-	if got := decode[cp.SandboxView](t, ended); got.Status != store.Ended {
+	ended := h.do(http.MethodDelete, "/sandboxes/"+v.ID, nil)
+	if got := decode[openapi.SandboxView](t, ended); got.Status != openapi.SandboxViewStatusEnded {
 		t.Errorf("delete = %s", got.Status)
 	}
 }
 
 func TestTagsNoHostCanCarryAre422(t *testing.T) {
-	a := newAPI(t)
-	res := a.do(http.MethodPost, "/sandboxes", map[string]any{
-		"owner_id": "me", "image": "i", "tags": []string{"driver:kubernetes"},
+	h := newHarness(t)
+	res := h.do(http.MethodPost, "/sandboxes", map[string]any{
+		"image": "i", "tags": []string{"driver:kubernetes"},
 	})
 	// Not a 400: the request is well formed, the fleet just cannot ever serve it.
 	if res.status != 422 {
@@ -308,8 +352,8 @@ func TestTagsNoHostCanCarryAre422(t *testing.T) {
 }
 
 func TestHosts(t *testing.T) {
-	a := newAPI(t)
-	err := a.store.InsertPendingHost(store.Host{
+	h := newHarness(t)
+	err := h.store.InsertPendingHost(store.Host{
 		ID: "h1", Name: "box", Fingerprint: "fp", ApproveCode: "ABCD-EF",
 		MaxSandboxes: 2, Tags: []string{"driver:docker"},
 	})
@@ -324,72 +368,81 @@ func TestHosts(t *testing.T) {
 	}{
 		{map[string]any{}, 400, "no code at all"},
 		{map[string]any{"code": "nope"}, 400, "the wrong code"},
-		{map[string]any{"code": "abcd-ef"}, 200, "the printed code, in any case"},
+		// A mutation with nothing to say says it with the status (decision 25).
+		{map[string]any{"code": "abcd-ef"}, 204, "the printed code, in any case"},
 		{map[string]any{"code": "abcd-ef"}, 409, "a host that is no longer pending"},
 	}
 	for _, c := range codes {
-		got := a.do(http.MethodPost, "/hosts/h1/approve", c.body).status
-		if got != c.want {
-			t.Errorf("approve with %s = %d, want %d", c.why, got, c.want)
+		res := h.do(http.MethodPost, "/hosts/h1/approve", c.body)
+		if res.status != c.want {
+			t.Errorf("approve with %s = %d, want %d", c.why, res.status, c.want)
+		}
+		if res.status == 204 && len(res.body) != 0 {
+			t.Errorf("a 204 carried a body: %s", res.body)
 		}
 	}
-	if got := a.do(http.MethodPost, "/hosts/nope/revoke", nil).status; got != 404 {
+	if got := h.do(http.MethodPost, "/hosts/nope/revoke", nil).status; got != 404 {
 		t.Errorf("revoke an unknown host = %d", got)
 	}
 
-	list := decode[[]cp.HostView](t, a.do(http.MethodGet, "/hosts", nil))
-	if len(list) != 1 || list[0].Status != store.HostApproved {
+	list := decode[[]adminapi.HostView](t, h.do(http.MethodGet, "/hosts", nil))
+	if len(list) != 1 || list[0].Status != adminapi.HostViewStatusApproved {
 		t.Fatalf("hosts = %+v", list)
 	}
-	if list[0].ApproveCode != "" {
+	if list[0].ApproveCode.Set {
 		t.Error("the code is only shown while the host is pending")
 	}
 	if !slices.Equal(list[0].Tags, []string{"driver:docker"}) {
 		t.Errorf("tags = %v", list[0].Tags)
 	}
-	if list[0].Online || list[0].Capacity != nil {
+	if list[0].Online || list[0].Capacity.Set {
 		t.Error("an offline host reports no capacity")
 	}
 }
 
-func TestTheDocumentListsEveryRoute(t *testing.T) {
-	a := newAPI(t)
-	doc := decode[struct {
-		Paths map[string]any `json:"paths"`
-	}](t, a.do(http.MethodGet, "/openapi.json", nil))
-
-	got := slices.Sorted(maps(doc.Paths))
-	want := []string{
-		"/attach",
-		"/healthz",
-		"/hosts",
-		"/hosts/{id}/approve",
-		"/hosts/{id}/revoke",
-		"/sandboxes",
-		"/sandboxes/{id}",
-		"/sandboxes/{id}/attach-token",
-		"/sandboxes/{id}/preview-token",
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("paths = %v, want %v", got, want)
+// The document is a checked-in file now, so the control plane hands out the bytes it was
+// generated from rather than a rendering of them. This is the one thing left to check:
+// that what it serves is that file and not something else.
+func TestTheDocumentsServedAreTheOnesGeneratedFrom(t *testing.T) {
+	h := newHarness(t)
+	for path, want := range map[string][]byte{
+		"/openapi.yaml":       api.Client,
+		"/openapi.admin.yaml": api.Admin,
+	} {
+		if got := h.do(http.MethodGet, path, nil).body; !bytes.Equal(got, want) {
+			t.Errorf("GET %s served %d bytes, want the %d in the file", path, len(got), len(want))
+		}
 	}
 }
 
-func TestAttachIsGatedByItsOwnToken(t *testing.T) {
-	a := newAPI(t)
-	if got := a.do(http.MethodGet, "/attach", nil, "Authorization", "").status; got != 401 {
-		t.Errorf("no token = %d", got)
-	}
-	if got := a.do(http.MethodGet, "/attach?token=nope", nil).status; got != 401 {
-		t.Errorf("a token we did not sign = %d", got)
+// The terminal is the one operation in the document that the generated router does not
+// serve. If net/http ever stops taking the route first, the handler that cannot upgrade a
+// connection answers instead — so this asserts the socket's gate, not ogen's.
+func TestTheTerminalSocketIsRoutedAheadOfTheGeneratedRouter(t *testing.T) {
+	h := newHarness(t)
+	for _, c := range []struct{ path, why string }{
+		{"/sandboxes/s_x/terminal", "no token at all"},
+		{"/sandboxes/s_x/terminal?token=nope", "a token we did not sign"},
+	} {
+		res := h.do(http.MethodGet, c.path, nil, "Authorization", "")
+		if res.status != 401 {
+			t.Errorf("%s = %d, want the socket's own 401", c.why, res.status)
+		}
 	}
 
-	// A good token upgrades, and the bridge says why it is going away rather than
+	// A token for one sandbox is not a token for another, even though the signature is
+	// ours either way.
+	token := h.tokens.Sign(cp.TokenPayload{Kind: cp.TokenAttach, SID: "s_a"}, time.Minute)
+	if got := h.do(http.MethodGet, "/sandboxes/s_b/terminal?token="+token, nil).status; got != 401 {
+		t.Errorf("s_a's token on s_b's path = %d", got)
+	}
+
+	// The right token upgrades, and the bridge says why it is going away rather than
 	// dropping the socket without a word.
-	token := a.tokens.Sign(cp.TokenPayload{Kind: cp.TokenAttach, SID: "s_missing"}, time.Minute)
-	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 	defer cancel()
-	url := "ws" + strings.TrimPrefix(a.srv.URL, "http") + "/attach?token=" + token
+	good := h.tokens.Sign(cp.TokenPayload{Kind: cp.TokenAttach, SID: "s_missing"}, time.Minute)
+	url := "ws" + strings.TrimPrefix(h.srv.URL, "http") + "/sandboxes/s_missing/terminal?token=" + good
 	// coder/websocket documents that the dial response body needs no closing.
 	ws, _, err := websocket.Dial(ctx, url, nil) //nolint:bodyclose
 	if err != nil {
@@ -410,15 +463,5 @@ func TestAttachIsGatedByItsOwnToken(t *testing.T) {
 	}
 	if msg.Type != "closed" || !strings.Contains(msg.Reason, "not running") {
 		t.Errorf("= %+v", msg)
-	}
-}
-
-func maps(m map[string]any) func(func(string) bool) {
-	return func(yield func(string) bool) {
-		for k := range m {
-			if !yield(k) {
-				return
-			}
-		}
 	}
 }

@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
-	"sandboxd/internal/cp"
-	"sandboxd/internal/cp/store"
+	"sandboxd/internal/openapi"
 	"sandboxd/internal/wire"
 )
 
@@ -27,13 +27,13 @@ type tunnelWorker struct {
 	ws  *websocket.Conn
 }
 
-func (a *api) connectWorker() *tunnelWorker {
+func (a *harness) connectWorker() *tunnelWorker {
 	a.t.Helper()
 	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
 	a.t.Cleanup(cancel)
-	url := "ws" + strings.TrimPrefix(a.srv.URL, "http") + "/tunnel"
+	socket := "ws" + strings.TrimPrefix(a.srv.URL, "http") + "/tunnel"
 	// coder/websocket documents that the dial response body needs no closing.
-	ws, _, err := websocket.Dial(ctx, url, nil) //nolint:bodyclose
+	ws, _, err := websocket.Dial(ctx, socket, nil) //nolint:bodyclose
 	if err != nil {
 		a.t.Fatal(err)
 	}
@@ -104,13 +104,34 @@ func (w *tunnelWorker) frame() (uint32, []byte) {
 	}
 }
 
+// terminal mints a terminal link and rebuilds it against the test server. The URL the API
+// returns names the public control plane the config gave it, which is not where this
+// listener is — so the credential is taken out of the link and put back into a local one.
+func (a *harness) terminal(sid string) string {
+	a.t.Helper()
+	res := a.do(http.MethodPost, "/sandboxes/"+sid+"/terminal", nil)
+	if res.status != 201 {
+		a.t.Fatalf("terminal = %d: %s", res.status, res.body)
+	}
+	link, err := url.Parse(decode[openapi.Link](a.t, res).URL)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	// The link points at the same path the socket is served on: one resource, two methods.
+	if want := "/sandboxes/" + sid + "/terminal"; link.Path != want {
+		a.t.Errorf("minted path = %q, want %q", link.Path, want)
+	}
+	return "ws" + strings.TrimPrefix(a.srv.URL, "http") +
+		link.Path + "?token=" + url.QueryEscape(link.Query().Get("token"))
+}
+
 // awaitStatus polls the API the way a client would.
-func (a *api) awaitStatus(sid string, want store.SandboxStatus) cp.SandboxView {
+func (a *harness) awaitStatus(sid string, want openapi.SandboxViewStatus) openapi.SandboxView {
 	a.t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	var last cp.SandboxView
+	var last openapi.SandboxView
 	for time.Now().Before(deadline) {
-		last = decode[cp.SandboxView](a.t, a.do(http.MethodGet, "/sandboxes/"+sid+"?owner_id=me", nil))
+		last = decode[openapi.SandboxView](a.t, a.do(http.MethodGet, "/sandboxes/"+sid, nil))
 		if last.Status == want {
 			return last
 		}
@@ -121,19 +142,19 @@ func (a *api) awaitStatus(sid string, want store.SandboxStatus) cp.SandboxView {
 }
 
 func TestASandboxFromPostToKeystroke(t *testing.T) {
-	a := newAPI(t)
+	a := newHarness(t)
 	w := a.connectWorker()
 
 	created := a.do(http.MethodPost, "/sandboxes", map[string]any{
-		"owner_id": "me", "image": "img:1", "tags": []string{"driver:docker"},
+		"image": "img:1", "tags": []string{"driver:docker"},
 		"secret_env": map[string]string{"GIT_TOKEN": "0-secret-0"},
 	})
 	if created.status != 201 {
 		t.Fatalf("create = %d", created.status)
 	}
-	v := decode[cp.SandboxView](t, created)
+	v := decode[openapi.SandboxView](t, created)
 	// A host with room takes it straight away, so the caller never sees `queued`.
-	if v.Status != store.Creating {
+	if v.Status != openapi.SandboxViewStatusCreating {
 		t.Fatalf("status = %s, want it placed on the connected host", v.Status)
 	}
 
@@ -150,23 +171,17 @@ func TestASandboxFromPostToKeystroke(t *testing.T) {
 	}
 
 	w.send(&wire.SandboxStarted{SID: v.ID})
-	running := a.awaitStatus(v.ID, store.Running)
-	if running.HostOnline == nil || !*running.HostOnline {
-		t.Errorf("host_online = %v", running.HostOnline)
+	running := a.awaitStatus(v.ID, openapi.SandboxViewStatusRunning)
+	if running.HostOnline.Null || !running.HostOnline.Value {
+		t.Errorf("host_online = %+v", running.HostOnline)
 	}
 
-	// A terminal, from the token the parent app mints for the browser.
-	minted := a.do(http.MethodPost, "/sandboxes/"+v.ID+"/attach-token", map[string]any{"owner_id": "me"})
-	if minted.status != 200 {
-		t.Fatalf("attach-token = %d", minted.status)
-	}
-	token := decode[cp.AttachToken](t, minted).Token
-
+	// A terminal, from the link the parent app mints for the browser.
 	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
 	defer cancel()
-	url := "ws" + strings.TrimPrefix(a.srv.URL, "http") + "/attach?token=" + token + "&cols=80&rows=24"
+	socket := a.terminal(v.ID) + "&cols=80&rows=24"
 	// coder/websocket documents that the dial response body needs no closing.
-	browser, _, err := websocket.Dial(ctx, url, nil) //nolint:bodyclose
+	browser, _, err := websocket.Dial(ctx, socket, nil) //nolint:bodyclose
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,34 +240,31 @@ func TestASandboxFromPostToKeystroke(t *testing.T) {
 
 	// And the sandbox ending reaches the API.
 	w.send(&wire.SandboxEnded{SID: v.ID, Reason: wire.EndExited, Detail: "shell exited"})
-	ended := a.awaitStatus(v.ID, store.Ended)
-	if ended.EndedReason == nil || *ended.EndedReason != wire.EndExited {
-		t.Errorf("ended_reason = %v", ended.EndedReason)
+	ended := a.awaitStatus(v.ID, openapi.SandboxViewStatusEnded)
+	if ended.EndedReason.Null || string(ended.EndedReason.Value) != string(wire.EndExited) {
+		t.Errorf("ended_reason = %+v", ended.EndedReason)
 	}
-	if ended.EndedDetail == nil || *ended.EndedDetail != "shell exited" {
-		t.Errorf("ended_detail = %v", ended.EndedDetail)
+	if ended.EndedDetail.Null || ended.EndedDetail.Value != "shell exited" {
+		t.Errorf("ended_detail = %+v", ended.EndedDetail)
 	}
 }
 
 func TestABrowserLeavingClosesItsPTY(t *testing.T) {
-	a := newAPI(t)
+	a := newHarness(t)
 	w := a.connectWorker()
 
-	v := decode[cp.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
-		map[string]any{"owner_id": "me", "image": "i"}))
+	v := decode[openapi.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
+		map[string]any{"image": "i"}))
 	if _, is := w.control().(*wire.SandboxCreate); !is {
 		t.Fatal("expected sandbox.create")
 	}
 	w.send(&wire.SandboxStarted{SID: v.ID})
-	a.awaitStatus(v.ID, store.Running)
+	a.awaitStatus(v.ID, openapi.SandboxViewStatusRunning)
 
-	token := decode[cp.AttachToken](t, a.do(http.MethodPost,
-		"/sandboxes/"+v.ID+"/attach-token", map[string]any{"owner_id": "me"})).Token
 	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
 	defer cancel()
-	url := "ws" + strings.TrimPrefix(a.srv.URL, "http") + "/attach?token=" + token
 	// coder/websocket documents that the dial response body needs no closing.
-	browser, _, err := websocket.Dial(ctx, url, nil) //nolint:bodyclose
+	browser, _, err := websocket.Dial(ctx, a.terminal(v.ID), nil) //nolint:bodyclose
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,21 +297,21 @@ func TestABrowserLeavingClosesItsPTY(t *testing.T) {
 }
 
 func TestADeleteReachesTheWorker(t *testing.T) {
-	a := newAPI(t)
+	a := newHarness(t)
 	w := a.connectWorker()
 
-	v := decode[cp.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
-		map[string]any{"owner_id": "me", "image": "i"}))
+	v := decode[openapi.SandboxView](t, a.do(http.MethodPost, "/sandboxes",
+		map[string]any{"image": "i"}))
 	if _, is := w.control().(*wire.SandboxCreate); !is {
 		t.Fatal("expected sandbox.create")
 	}
 	w.send(&wire.SandboxStarted{SID: v.ID})
-	a.awaitStatus(v.ID, store.Running)
+	a.awaitStatus(v.ID, openapi.SandboxViewStatusRunning)
 
-	ended := decode[cp.SandboxView](t,
-		a.do(http.MethodDelete, "/sandboxes/"+v.ID+"?owner_id=me", nil))
+	ended := decode[openapi.SandboxView](t,
+		a.do(http.MethodDelete, "/sandboxes/"+v.ID, nil))
 	// The host is online, so the row waits for it to confirm rather than lying.
-	if ended.Status != store.Running {
+	if ended.Status != openapi.SandboxViewStatusRunning {
 		t.Errorf("status right after DELETE = %s", ended.Status)
 	}
 	msg := w.control()
@@ -308,5 +320,5 @@ func TestADeleteReachesTheWorker(t *testing.T) {
 		t.Fatalf("the worker was told %T %+v", msg, msg)
 	}
 	w.send(&wire.SandboxEnded{SID: v.ID, Reason: wire.EndClosed})
-	a.awaitStatus(v.ID, store.Ended)
+	a.awaitStatus(v.ID, openapi.SandboxViewStatusEnded)
 }

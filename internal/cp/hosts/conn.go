@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -26,7 +27,10 @@ const (
 	// writeTimeout bounds a single frame. A socket that cannot take a frame in this long
 	// is wedged, and dropping it beats stalling every stream behind it.
 	writeTimeout = 10 * time.Second
-	readLimit    = 4 << 20
+	// controlWait bounds how long a control message waits for room on the queue. See
+	// send: the caller is usually the scheduler goroutine, and it may not wait longer.
+	controlWait = time.Second
+	readLimit   = 4 << 20
 )
 
 var errHostGone = errors.New("hosts: host is offline")
@@ -45,9 +49,10 @@ type Conn struct {
 	ws  *websocket.Conn
 	log *slog.Logger
 
-	// hostID is written once, on the read goroutine, before the conn is published in any
-	// hub map; every other reader finds the conn through those maps under the hub's lock.
-	hostID string
+	// hostID is the host this socket enrolled as. It is written once, on the read
+	// goroutine, but writeLoop is already running by then and names the host when a write
+	// fails, so it is atomic rather than plain.
+	hostID atomic.Pointer[string]
 
 	out       chan outgoing
 	done      chan struct{}
@@ -74,7 +79,15 @@ func newConn(ws *websocket.Conn, log *slog.Logger) *Conn {
 }
 
 // HostID is the host this socket enrolled as, empty until it has said hello.
-func (c *Conn) HostID() string { return c.hostID }
+func (c *Conn) HostID() string {
+	if id := c.hostID.Load(); id != nil {
+		return *id
+	}
+	return ""
+}
+
+// setHostID names the socket, once, when enrollment has decided who it is.
+func (c *Conn) setHostID(id string) { c.hostID.Store(&id) }
 
 // Capacity is what the host last reported.
 func (c *Conn) Capacity() cp.Capacity {
@@ -107,7 +120,7 @@ func (c *Conn) writeLoop(ctx context.Context) {
 				err := c.ws.Write(wctx, m.typ, m.data)
 				cancel()
 				if err != nil {
-					c.log.Warn("tunnel write failed", "host_id", c.hostID, "err", err)
+					c.log.Warn("tunnel write failed", "host_id", c.HostID(), "err", err)
 					return
 				}
 			}
@@ -134,17 +147,33 @@ func (c *Conn) flush(timeout time.Duration) {
 	}
 }
 
-// send queues a control message. Control is never dropped: a lost sandbox.create would
-// leave a row in `creating` with nothing behind it.
+// send queues a control message. Control is never dropped silently: a lost sandbox.create
+// would leave a row in `creating` with nothing behind it, so a caller that cannot queue
+// one is told the host is gone and treats it as an unplaced sandbox.
+//
+// The policy when the queue is full, which this stream kind owes the same way a PTY and a
+// port stream do: wait controlWait, then drop the tunnel. The caller here is usually the
+// scheduler goroutine — the only writer of sandbox state — and the queue it is waiting on
+// carries every PTY and port frame for this host too. Blocking until writeTimeout retired
+// the socket would stall every API call in the process behind one wedged worker. A host
+// that cannot take a control frame in a second is gone; dropping it makes the worker
+// reconnect, and hello reconciles both directions.
 func (c *Conn) send(m wire.FromCP) error {
 	b, err := wire.Marshal(m)
 	if err != nil {
 		return err
 	}
+	timer := time.NewTimer(controlWait)
+	defer timer.Stop()
 	select {
 	case c.out <- outgoing{typ: websocket.MessageText, data: b}:
 		return nil
 	case <-c.done:
+		return errHostGone
+	case <-timer.C:
+		c.log.Warn("control queue stalled; dropping the tunnel",
+			"host_id", c.HostID(), "after", controlWait)
+		c.shutdown()
 		return errHostGone
 	}
 }
@@ -291,6 +320,6 @@ func (c *Conn) onStreamMsg(m wire.FromHost) {
 	case *wire.PortClose:
 		c.endStream(m.Stream)
 	default:
-		c.log.Warn("unroutable host message", "host_id", c.hostID, "type", fmt.Sprintf("%T", m))
+		c.log.Warn("unroutable host message", "host_id", c.HostID(), "type", fmt.Sprintf("%T", m))
 	}
 }

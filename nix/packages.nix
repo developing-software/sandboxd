@@ -9,6 +9,9 @@ let
     fileset = lib.fileset.unions [
       (root + "/go.mod")
       (root + "/go.sum")
+      # api/ is a Go package: the control plane embeds the two documents it was generated
+      # from and serves those bytes, rather than a second rendering of them.
+      (root + "/api")
       (root + "/cmd")
       (root + "/internal")
     ];
@@ -19,9 +22,16 @@ let
     buildGoModule {
       inherit pname src;
       version = "0.1.0";
-      # One vendor tree for both binaries. Regenerate after a dependency change: set it to
+      # One module cache for both binaries. Regenerate after a dependency change: set it to
       # lib.fakeHash, run `nix build .#api`, and copy the hash the error reports.
-      vendorHash = "sha256-OQwRGbY/BNa4GNvZl746jSA2+pbEu8Iux9NqUdlO9U4=";
+      #
+      # The proxy rather than a vendor tree, because ogen is a `tool` in go.mod: `go mod
+      # vendor` writes tool dependencies into vendor/ without marking them explicit in
+      # modules.txt, and the build then refuses its own vendor directory. Nothing here
+      # runs the generator — internal/openapi and internal/adminapi are checked in — so
+      # this is the cost of pinning the generator's version beside the runtime's.
+      proxyVendor = true;
+      vendorHash = "sha256-+Ovr6f7IxJyBzl7ONMzoPMZQeJYvT8F83GlC6jgdHxk=";
       subPackages = [ subPackage ];
       env.CGO_ENABLED = 0;
       ldflags = [

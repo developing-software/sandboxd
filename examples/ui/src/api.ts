@@ -1,9 +1,23 @@
-// The JSON half of the UI, under /api. GET /api/presets and POST /api/sandboxes are this
-// app's own: the latter resolves a preset, then calls the control plane with the SDK.
-// Everything else is forwarded byte for byte with the service token added, which is why
-// the browser talks to this app and never to the API directly.
-import { createSandbox, createSandboxd } from '@sandboxd/sdk'
-import { Hono } from 'hono'
+// The JSON half of the UI, under /api. Every route is one call on the generated SDK, so
+// the browser never holds the token and this app never spells a URL or a shape the
+// OpenAPI document did not give it. Two routes are its own: GET /presets, which the
+// control plane does not have, and POST /sandboxes, which resolves a preset first.
+import {
+  type ApproveBody,
+  approveHost,
+  createSandbox,
+  createSandboxd,
+  endSandbox,
+  getSandbox,
+  listHosts,
+  listSandboxes,
+  mintAttachToken,
+  mintPreviewToken,
+  type OwnerBody,
+  type PreviewBody,
+  revokeHost,
+} from '@sandboxd/sdk'
+import { type Context, Hono } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { UiConfig } from './config'
 import { Err } from './errors'
@@ -20,64 +34,70 @@ export interface ApiDeps {
   fetch?: typeof fetch
 }
 
+/** What every generated call resolves to. The SDK never rejects. */
+interface Result {
+  data?: unknown
+  error?: unknown
+  response?: Response
+}
+
 export function createApi(d: ApiDeps) {
-  const call = d.fetch ?? fetch
-  // The one call this app makes as a client rather than a proxy, so it makes it with the
-  // generated SDK. Everything else is bytes it has no opinion about.
-  const api = createSandboxd({
+  const client = createSandboxd({
     baseUrl: d.cfg.apiUrl,
     serviceToken: d.cfg.serviceToken,
     ...(d.fetch === undefined ? {} : { fetch: d.fetch }),
   })
-  const down = (e: unknown) => unreachable(d.cfg.apiUrl, e)
+  // The API's answer, status and body untouched. No response at all is transport: the
+  // API is down or restarting. Name it, so the page says so instead of "internal error".
+  const reply = async (c: Context, result: Promise<Result>) => {
+    const { data, error, response } = await result
+    if (!response) {
+      log.warn('api unreachable', { url: d.cfg.apiUrl, err: String(error) })
+      throw new Err.Http(502, `api unreachable at ${d.cfg.apiUrl}`)
+    }
+    return c.json((data ?? error) as object, response.status as ContentfulStatusCode)
+  }
+  const id = (c: Context) => ({ id: c.req.param('id') ?? '' })
+  const owner = (c: Context) => ({ owner_id: c.req.query('owner_id') ?? '' })
 
   return new Hono({ strict: false })
     .basePath('/api')
     .get('/presets', (c) => c.json(d.presets.list()))
+    .get('/hosts', (c) => reply(c, listHosts({ client })))
+    .post('/hosts/:id/approve', async (c) =>
+      reply(c, approveHost({ client, path: id(c), body: await json<ApproveBody>(c) })),
+    )
+    .post('/hosts/:id/revoke', (c) => reply(c, revokeHost({ client, path: id(c) })))
+    .get('/sandboxes', (c) => reply(c, listSandboxes({ client, query: owner(c) })))
     .post('/sandboxes', async (c) => {
-      const raw: unknown = await c.req.json().catch(() => {
-        throw Err.badRequest('invalid JSON body')
-      })
-      const body = buildCreate({ defaultImage: d.cfg.defaultImage, presets: d.presets }, raw)
-      const { data, error, response } = await createSandbox({ client: api, body })
-      // The SDK never rejects. No response at all is transport: the API is down.
-      if (!response) throw down(error)
-      return c.json((data ?? error) as object, response.status as ContentfulStatusCode)
+      const deps = { defaultImage: d.cfg.defaultImage, presets: d.presets }
+      const body = buildCreate(deps, await json<unknown>(c))
+      return reply(c, createSandbox({ client, body }))
     })
-    .all('/*', async (c) => {
-      const path = c.req.path.slice('/api'.length) + new URL(c.req.url).search
-      const url = new URL(path, d.cfg.apiUrl)
-      const headers: Record<string, string> = {
-        authorization: `Bearer ${d.cfg.serviceToken}`,
-      }
-      const type = c.req.header('content-type')
-      if (type) headers['content-type'] = type
-      const raw =
-        c.req.method === 'GET' || c.req.method === 'HEAD' ? null : await c.req.arrayBuffer()
-      const body = raw && raw.byteLength > 0 ? raw : undefined
-      const res = await call(url, { method: c.req.method, headers, body }).catch((e) => {
-        throw down(e)
-      })
-      return relay(res)
-    })
-    .onError((err, c) => {
-      if (err instanceof Err.Http)
-        return c.json({ error: err.message }, err.status as ContentfulStatusCode)
-      log.error('unhandled', { err: String(err), stack: err.stack })
-      return c.json({ error: 'internal error' }, 500)
-    })
+    .get('/sandboxes/:id', (c) =>
+      reply(c, getSandbox({ client, path: id(c), query: owner(c) })),
+    )
+    .delete('/sandboxes/:id', (c) =>
+      reply(c, endSandbox({ client, path: id(c), query: owner(c) })),
+    )
+    .post('/sandboxes/:id/attach-token', async (c) =>
+      reply(c, mintAttachToken({ client, path: id(c), body: await json<OwnerBody>(c) })),
+    )
+    .post('/sandboxes/:id/preview-token', async (c) =>
+      reply(c, mintPreviewToken({ client, path: id(c), body: await json<PreviewBody>(c) })),
+    )
+    .onError(onError)
 }
 
-/** A rejected fetch is transport: the API is down or restarting. Name it, so the page
- *  says so instead of "internal error". */
-function unreachable(url: string, e: unknown) {
-  log.warn('api unreachable', { url, err: String(e) })
-  return new Err.Http(502, `api unreachable at ${url}`)
+function onError(err: Error, c: Context) {
+  if (err instanceof Err.Http)
+    return c.json({ error: err.message }, err.status as ContentfulStatusCode)
+  log.error('unhandled', { err: String(err), stack: err.stack })
+  return c.json({ error: 'internal error' }, 500)
 }
 
-/** The API's answer, status and body untouched. */
-const relay = (res: Pick<Response, 'body' | 'status' | 'headers'>) =>
-  new Response(res.body, {
-    status: res.status,
-    headers: { 'content-type': res.headers.get('content-type') ?? 'application/json' },
-  })
+/** The body parsed and no more: the API validates the shape, not this app. */
+const json = async <T>(c: Context) =>
+  (await c.req.json().catch(() => {
+    throw Err.badRequest('invalid JSON body')
+  })) as T

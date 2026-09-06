@@ -20,6 +20,10 @@ linters:
           deny:
             - pkg: sandboxd/internal/cp
               desc: the control plane and the worker meet on the wire, nowhere else
+            - pkg: sandboxd/internal/openapi
+              desc: the worker speaks the wire protocol, not the HTTP API
+            - pkg: sandboxd/internal/adminapi
+              desc: the worker speaks the wire protocol, not the HTTP API
         cp:
           files: ['**/internal/cp/**']
           deny:
