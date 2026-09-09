@@ -15,17 +15,16 @@ browser. A token in the browser could create sandboxes for any owner.
 ## Use it
 
 ```ts
-import { createSandbox, createSandboxd, openTerminal } from '@sandboxd/sdk'
+import { Sandboxd } from '@sandboxd/sdk'
 
-const client = createSandboxd({
+const sandboxd = new Sandboxd({
   baseUrl: 'https://sandboxd.example.com',
   serviceToken: process.env.SANDBOXD_SERVICE_TOKEN!,
 })
 
 const owner = { 'X-Sandboxd-Owner': 'user_42' }
 
-const { data: sandbox, error } = await createSandbox({
-  client,
+const { data: sandbox, error } = await sandboxd.createSandbox({
   headers: owner,
   body: {
     image: 'python:3.12',
@@ -36,13 +35,15 @@ const { data: sandbox, error } = await createSandbox({
 if (error) throw new Error(error.error) // { error, issues? }
 
 // The browser terminal: ask for a link, hand it to xterm.js. The credential is in the URL.
-const { data: link } = await openTerminal({
-  client,
+const { data: link } = await sandboxd.openTerminal({
   headers: owner,
   path: { id: sandbox!.id },
 })
 new WebSocket(link!.url)
 ```
+
+One control plane is one object. The transport is built in the constructor and travels
+with it, so no call carries a client, and a second control plane is a second `Sandboxd`.
 
 The token says which app is calling; `X-Sandboxd-Owner` says which of its users for. It is
 required by the document, so the compiler asks for it on every call rather than the API
@@ -52,16 +53,16 @@ Nothing throws. Every call answers `{ data, error, response }`; `response` is un
 only when the request never reached the control plane.
 
 `GET /sandboxes/{id}/terminal` is in the document so a reader can find the socket, but it
-is a WebSocket upgrade and `attachTerminal` is not exported: call `openTerminal` and open
-the `url` it hands back.
+is not a method here: it is a WebSocket upgrade, and a fetch against it can only fail. The
+generator is told to drop it. Call `openTerminal` and open the `url` it hands back.
 
 ## What is generated
 
-| Path                   | What                                                               |
-| ---------------------- | ------------------------------------------------------------------ |
-| `src/generated/`       | hey-api's output. Never edited; the formatter and linter ignore it |
-| `src/index.ts`         | Hand-written. The client factory, and the only thing a caller sees |
-| `openapi-ts.config.ts` | The generator's config                                             |
+| Path                   | What                                                                 |
+| ---------------------- | -------------------------------------------------------------------- |
+| `src/generated/`       | hey-api's output. Never edited; the formatter and linter ignore it   |
+| `src/index.ts`         | Hand-written. The `Sandboxd` class, and the only thing a caller sees |
+| `openapi-ts.config.ts` | The generator's config                                               |
 
 ```bash
 # after editing api/client.yaml, from the repo root:

@@ -18,39 +18,85 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
     meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta;
 };
 
-/**
- * List hosts
- *
- * Every enrolled host, with what it reported about itself.
- */
-export const listHosts = <ThrowOnError extends boolean = false>(options?: Options<ListHostsData, ThrowOnError>): RequestResult<ListHostsResponses, ListHostsErrors, ThrowOnError> => (options?.client ?? client).get<ListHostsResponses, ListHostsErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/hosts',
-    ...options
-});
-
-/**
- * Approve a pending host
- *
- * The code is what the worker printed when it enrolled. A worker started with the operator's join token skips this and is approved on hello. 409 when the host is not pending; 400 when the code does not match.
- */
-export const approveHost = <ThrowOnError extends boolean = false>(options: Options<ApproveHostData, ThrowOnError>): RequestResult<ApproveHostResponses, ApproveHostErrors, ThrowOnError> => (options.client ?? client).post<ApproveHostResponses, ApproveHostErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/hosts/{id}/approve',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
+class HeyApiClient {
+    protected client: Client;
+    
+    constructor(args?: {
+        client?: Client;
+    }) {
+        this.client = args?.client ?? client;
     }
-});
+}
 
-/**
- * Revoke a host
- *
- * The host is rejected on its next hello, and on the socket it is holding now. The row stays — a revoked host is remembered, not removed.
- */
-export const revokeHost = <ThrowOnError extends boolean = false>(options: Options<RevokeHostData, ThrowOnError>): RequestResult<RevokeHostResponses, RevokeHostErrors, ThrowOnError> => (options.client ?? client).post<RevokeHostResponses, RevokeHostErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/hosts/{id}/revoke',
-    ...options
-});
+class HeyApiRegistry<T> {
+    private readonly defaultKey = 'default';
+    
+    private readonly instances: Map<string, T> = new Map();
+    
+    get(key?: string): T {
+        const instance = this.instances.get(key ?? this.defaultKey);
+        if (!instance) {
+            throw new Error(`No SDK client found. Create one with "new Fleet()" to fix this error.`);
+        }
+        return instance;
+    }
+    
+    set(value: T, key?: string): void {
+        this.instances.set(key ?? this.defaultKey, value);
+    }
+}
+
+export class Fleet extends HeyApiClient {
+    public static readonly __registry: HeyApiRegistry<Fleet> = new HeyApiRegistry<Fleet>();
+    
+    constructor(args?: {
+        client?: Client;
+        key?: string;
+    }) {
+        super(args);
+        Fleet.__registry.set(this, args?.key);
+    }
+    
+    /**
+     * List hosts
+     *
+     * Every enrolled host, with what it reported about itself.
+     */
+    public listHosts<ThrowOnError extends boolean = false>(options?: Options<ListHostsData, ThrowOnError>): RequestResult<ListHostsResponses, ListHostsErrors, ThrowOnError> {
+        return (options?.client ?? this.client).get<ListHostsResponses, ListHostsErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/hosts',
+            ...options
+        });
+    }
+    
+    /**
+     * Approve a pending host
+     *
+     * The code is what the worker printed when it enrolled. A worker started with the operator's join token skips this and is approved on hello. 409 when the host is not pending; 400 when the code does not match.
+     */
+    public approveHost<ThrowOnError extends boolean = false>(options: Options<ApproveHostData, ThrowOnError>): RequestResult<ApproveHostResponses, ApproveHostErrors, ThrowOnError> {
+        return (options.client ?? this.client).post<ApproveHostResponses, ApproveHostErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/hosts/{id}/approve',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+    
+    /**
+     * Revoke a host
+     *
+     * The host is rejected on its next hello, and on the socket it is holding now. The row stays — a revoked host is remembered, not removed.
+     */
+    public revokeHost<ThrowOnError extends boolean = false>(options: Options<RevokeHostData, ThrowOnError>): RequestResult<RevokeHostResponses, RevokeHostErrors, ThrowOnError> {
+        return (options.client ?? this.client).post<RevokeHostResponses, RevokeHostErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/hosts/{id}/revoke',
+            ...options
+        });
+    }
+}

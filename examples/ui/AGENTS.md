@@ -44,9 +44,10 @@ And the rest:
 
 ## Rules
 
-- **Every call to the control plane is a generated function.** `getSandbox`,
-  `openTerminal`, `listHosts`, … — from `@sandboxd/sdk` for anything a client does, from
-  `src/admin/` for the three fleet routes. Never `fetch` against a URL this app spelled
+- **Every call to the control plane is a method on a generated class.**
+  `sandboxd.getSandbox`, `sandboxd.openTerminal`, `fleet.listHosts`, … — `Sandboxd` from
+  `@sandboxd/sdk` for anything a client does, `Fleet` from `src/admin/` for the three
+  fleet routes. Both are built once in `clients()` and carry the token. Never `fetch` against a URL this app spelled
   itself, and no byte proxy: a path neither document names is a 404 here. This is what
   makes the app the proof that the documents are usable — a route no generated client can
   express is a gap in `api/`, and the place to fix it is the YAML, not a handler. The

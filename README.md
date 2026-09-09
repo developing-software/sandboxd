@@ -152,15 +152,14 @@ published client so it stays free to change.
 server is generated from, so a contract change is a type error rather than a runtime 400.
 
 ```ts
-import { createSandbox, createSandboxd } from '@sandboxd/sdk'
+import { Sandboxd } from '@sandboxd/sdk'
 
-const client = createSandboxd({
+const sandboxd = new Sandboxd({
   baseUrl: 'http://localhost:8080',
   serviceToken: process.env.SANDBOXD_SERVICE_TOKEN!,
 })
 
-const { data, error } = await createSandbox({
-  client,
+const { data, error } = await sandboxd.createSandbox({
   headers: { 'X-Sandboxd-Owner': 'me' },
   body: { image: 'python:3.12', cmd: ['bash'] },
 })

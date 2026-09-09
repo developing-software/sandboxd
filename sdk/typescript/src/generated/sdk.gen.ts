@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AttachTerminalData, AttachTerminalErrors, AttachTerminalResponses, CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, EndSandboxData, EndSandboxErrors, EndSandboxResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, HealthzData, HealthzErrors, HealthzResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, OpenPreviewData, OpenPreviewErrors, OpenPreviewResponses, OpenTerminalData, OpenTerminalErrors, OpenTerminalResponses } from './types.gen';
+import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, EndSandboxData, EndSandboxErrors, EndSandboxResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, HealthzData, HealthzErrors, HealthzResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, OpenPreviewData, OpenPreviewErrors, OpenPreviewResponses, OpenTerminalData, OpenTerminalErrors, OpenTerminalResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -18,88 +18,135 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
     meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta;
 };
 
-/**
- * Liveness
- */
-export const healthz = <ThrowOnError extends boolean = false>(options?: Options<HealthzData, ThrowOnError>): RequestResult<HealthzResponses, HealthzErrors, ThrowOnError> => (options?.client ?? client).get<HealthzResponses, HealthzErrors, ThrowOnError>({ url: '/healthz', ...options });
-
-/**
- * List sandboxes
- *
- * This owner's sandboxes, newest first. There is no unscoped listing: the owner header is required on every route here, so no call can widen to the whole fleet by omitting something.
- */
-export const listSandboxes = <ThrowOnError extends boolean = false>(options: Options<ListSandboxesData, ThrowOnError>): RequestResult<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError> => (options.client ?? client).get<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes',
-    ...options
-});
-
-/**
- * Create a sandbox
- *
- * Presets are resolved before this call, by the client: the body names an image, a command, env and the host tags it needs. Answers 422 when no approved host can ever carry the required tags — a requirement the fleet is merely too full for queues instead, and the sandbox comes back `queued` with a `queue_position`.
- */
-export const createSandbox = <ThrowOnError extends boolean = false>(options: Options<CreateSandboxData, ThrowOnError>): RequestResult<CreateSandboxResponses, CreateSandboxErrors, ThrowOnError> => (options.client ?? client).post<CreateSandboxResponses, CreateSandboxErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
+class HeyApiClient {
+    protected client: Client;
+    
+    constructor(args?: {
+        client?: Client;
+    }) {
+        this.client = args?.client ?? client;
     }
-});
+}
 
-/**
- * End a sandbox
- *
- * Returns the sandbox as it stands: already `ended` when it was queued or its host is gone, still `running` while its host is being told.
- */
-export const endSandbox = <ThrowOnError extends boolean = false>(options: Options<EndSandboxData, ThrowOnError>): RequestResult<EndSandboxResponses, EndSandboxErrors, ThrowOnError> => (options.client ?? client).delete<EndSandboxResponses, EndSandboxErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes/{id}',
-    ...options
-});
-
-/**
- * Get a sandbox
- *
- * 404 both when there is no such sandbox and when it belongs to another owner: the two are deliberately indistinguishable.
- */
-export const getSandbox = <ThrowOnError extends boolean = false>(options: Options<GetSandboxData, ThrowOnError>): RequestResult<GetSandboxResponses, GetSandboxErrors, ThrowOnError> => (options.client ?? client).get<GetSandboxResponses, GetSandboxErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes/{id}',
-    ...options
-});
-
-/**
- * Attach to the terminal
- *
- * The socket itself, and the one operation here the generated router does not serve: an upgrade has no ResponseWriter to hand a handler, so net/http takes the route first. Binary frames are raw PTY bytes both ways; text frames are JSON — the client sends {type:"resize",cols,rows}, the server sends {type:"closed",reason}.
- */
-export const attachTerminal = <ThrowOnError extends boolean = false>(options: Options<AttachTerminalData, ThrowOnError>): RequestResult<AttachTerminalResponses, AttachTerminalErrors, ThrowOnError> => (options.client ?? client).get<AttachTerminalResponses, AttachTerminalErrors, ThrowOnError>({ url: '/sandboxes/{id}/terminal', ...options });
-
-/**
- * Open a terminal
- *
- * Returns the URL to attach to, good for 60 s and scoped to this one sandbox. Hand it to a browser. 409 while the sandbox is not `running` — there is no PTY yet.
- */
-export const openTerminal = <ThrowOnError extends boolean = false>(options: Options<OpenTerminalData, ThrowOnError>): RequestResult<OpenTerminalResponses, OpenTerminalErrors, ThrowOnError> => (options.client ?? client).post<OpenTerminalResponses, OpenTerminalErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes/{id}/terminal',
-    ...options
-});
-
-/**
- * Open a preview
- *
- * Returns the URL a port inside the sandbox is reachable at, good for 10 min. Hand it to a browser: the first request there trades the token in the URL for a subdomain-scoped cookie and redirects to a clean address, so the token does not stay in the address bar. The preview itself is served from `<port>-<sid>.<preview domain>`, not from this API.
- */
-export const openPreview = <ThrowOnError extends boolean = false>(options: Options<OpenPreviewData, ThrowOnError>): RequestResult<OpenPreviewResponses, OpenPreviewErrors, ThrowOnError> => (options.client ?? client).post<OpenPreviewResponses, OpenPreviewErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/sandboxes/{id}/preview',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
+class HeyApiRegistry<T> {
+    private readonly defaultKey = 'default';
+    
+    private readonly instances: Map<string, T> = new Map();
+    
+    get(key?: string): T {
+        const instance = this.instances.get(key ?? this.defaultKey);
+        if (!instance) {
+            throw new Error(`No SDK client found. Create one with "new Sandboxd()" to fix this error.`);
+        }
+        return instance;
     }
-});
+    
+    set(value: T, key?: string): void {
+        this.instances.set(key ?? this.defaultKey, value);
+    }
+}
+
+export class Sandboxd extends HeyApiClient {
+    public static readonly __registry: HeyApiRegistry<Sandboxd> = new HeyApiRegistry<Sandboxd>();
+    
+    constructor(args?: {
+        client?: Client;
+        key?: string;
+    }) {
+        super(args);
+        Sandboxd.__registry.set(this, args?.key);
+    }
+    
+    /**
+     * Liveness
+     */
+    public healthz<ThrowOnError extends boolean = false>(options?: Options<HealthzData, ThrowOnError>): RequestResult<HealthzResponses, HealthzErrors, ThrowOnError> {
+        return (options?.client ?? this.client).get<HealthzResponses, HealthzErrors, ThrowOnError>({ url: '/healthz', ...options });
+    }
+    
+    /**
+     * List sandboxes
+     *
+     * This owner's sandboxes, newest first. There is no unscoped listing: the owner header is required on every route here, so no call can widen to the whole fleet by omitting something.
+     */
+    public listSandboxes<ThrowOnError extends boolean = false>(options: Options<ListSandboxesData, ThrowOnError>): RequestResult<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError> {
+        return (options.client ?? this.client).get<ListSandboxesResponses, ListSandboxesErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/sandboxes',
+            ...options
+        });
+    }
+    
+    /**
+     * Create a sandbox
+     *
+     * Presets are resolved before this call, by the client: the body names an image, a command, env and the host tags it needs. Answers 422 when no approved host can ever carry the required tags — a requirement the fleet is merely too full for queues instead, and the sandbox comes back `queued` with a `queue_position`.
+     */
+    public createSandbox<ThrowOnError extends boolean = false>(options: Options<CreateSandboxData, ThrowOnError>): RequestResult<CreateSandboxResponses, CreateSandboxErrors, ThrowOnError> {
+        return (options.client ?? this.client).post<CreateSandboxResponses, CreateSandboxErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/sandboxes',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+    
+    /**
+     * End a sandbox
+     *
+     * Returns the sandbox as it stands: already `ended` when it was queued or its host is gone, still `running` while its host is being told.
+     */
+    public endSandbox<ThrowOnError extends boolean = false>(options: Options<EndSandboxData, ThrowOnError>): RequestResult<EndSandboxResponses, EndSandboxErrors, ThrowOnError> {
+        return (options.client ?? this.client).delete<EndSandboxResponses, EndSandboxErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/sandboxes/{id}',
+            ...options
+        });
+    }
+    
+    /**
+     * Get a sandbox
+     *
+     * 404 both when there is no such sandbox and when it belongs to another owner: the two are deliberately indistinguishable.
+     */
+    public getSandbox<ThrowOnError extends boolean = false>(options: Options<GetSandboxData, ThrowOnError>): RequestResult<GetSandboxResponses, GetSandboxErrors, ThrowOnError> {
+        return (options.client ?? this.client).get<GetSandboxResponses, GetSandboxErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/sandboxes/{id}',
+            ...options
+        });
+    }
+    
+    /**
+     * Open a terminal
+     *
+     * Returns the URL to attach to, good for 60 s and scoped to this one sandbox. Hand it to a browser. 409 while the sandbox is not `running` — there is no PTY yet.
+     */
+    public openTerminal<ThrowOnError extends boolean = false>(options: Options<OpenTerminalData, ThrowOnError>): RequestResult<OpenTerminalResponses, OpenTerminalErrors, ThrowOnError> {
+        return (options.client ?? this.client).post<OpenTerminalResponses, OpenTerminalErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/sandboxes/{id}/terminal',
+            ...options
+        });
+    }
+    
+    /**
+     * Open a preview
+     *
+     * Returns the URL a port inside the sandbox is reachable at, good for 10 min. Hand it to a browser: the first request there trades the token in the URL for a subdomain-scoped cookie and redirects to a clean address, so the token does not stay in the address bar. The preview itself is served from `<port>-<sid>.<preview domain>`, not from this API.
+     */
+    public openPreview<ThrowOnError extends boolean = false>(options: Options<OpenPreviewData, ThrowOnError>): RequestResult<OpenPreviewResponses, OpenPreviewErrors, ThrowOnError> {
+        return (options.client ?? this.client).post<OpenPreviewResponses, OpenPreviewErrors, ThrowOnError>({
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/sandboxes/{id}/preview',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+}

@@ -15,5 +15,11 @@ export default defineConfig({
   // Checked in, and neither the formatter nor the linter touches it, exactly as
   // sdk/typescript treats its own output.
   output: { path: 'src/admin', postProcess: [] },
-  plugins: ['@hey-api/client-fetch', '@hey-api/typescript', '@hey-api/sdk'],
+  // One class, as in sdk/typescript: the fleet routes hang off `new Fleet({ client })`
+  // so both generated trees read the same way in api.ts.
+  plugins: [
+    '@hey-api/client-fetch',
+    '@hey-api/typescript',
+    { name: '@hey-api/sdk', operations: { containerName: 'Fleet', strategy: 'single' } },
+  ],
 })

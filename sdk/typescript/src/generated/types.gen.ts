@@ -272,46 +272,6 @@ export type GetSandboxResponses = {
 
 export type GetSandboxResponse = GetSandboxResponses[keyof GetSandboxResponses];
 
-export type AttachTerminalData = {
-    body?: never;
-    path: {
-        id: string;
-    };
-    query: {
-        /**
-         * The token embedded in the URL that POST to this path returned.
-         */
-        token: string;
-        /**
-         * Terminal width in cells. Default 120.
-         */
-        cols?: number;
-        /**
-         * Terminal height in cells. Default 40.
-         */
-        rows?: number;
-    };
-    url: '/sandboxes/{id}/terminal';
-};
-
-export type AttachTerminalErrors = {
-    /**
-     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
-     */
-    default: ErrorModel;
-};
-
-export type AttachTerminalError = AttachTerminalErrors[keyof AttachTerminalErrors];
-
-export type AttachTerminalResponses = {
-    /**
-     * Every failure. `error` is the first problem in prose; `issues` names each failing field when the request did not validate.
-     */
-    default: ErrorModel;
-};
-
-export type AttachTerminalResponse = AttachTerminalResponses[keyof AttachTerminalResponses];
-
 export type OpenTerminalData = {
     body?: never;
     headers: {
