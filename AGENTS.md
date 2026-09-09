@@ -1,9 +1,10 @@
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The working branch is `dev`; `main` is the release branch.
 - `VISION.md` is what this is and is not; permanent. `PLAN.md` is what is being built
-  next; temporary. Decisions and what they rejected are ADRs under `docs/adr/` (being
-  written; code comments still cite them as `DESIGN.md decision N` until then). A
-  behaviour change is an ADR first, then code.
+  next; temporary, git-ignored, and present only in a working tree that has one.
+  Decisions and what they rejected are ADRs under `docs/adr/` (being written; code
+  comments still cite them as `DESIGN.md decision N` until then). A behaviour change is
+  an ADR first, then code.
 
 ## Stack
 
