@@ -31,7 +31,7 @@ let
       # runs the generator — internal/gen is checked in — so
       # this is the cost of pinning the generator's version beside the runtime's.
       proxyVendor = true;
-      vendorHash = "sha256-+Ovr6f7IxJyBzl7ONMzoPMZQeJYvT8F83GlC6jgdHxk=";
+      vendorHash = "sha256-71KzG5wQjMvU1aPQBg3yQUV4K4ovBQruepMWkqLE3W8=";
       subPackages = [ subPackage ];
       env.CGO_ENABLED = 0;
       ldflags = [

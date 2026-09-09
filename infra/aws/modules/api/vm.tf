@@ -57,7 +57,7 @@ resource "aws_eip" "this" {
 module "system" {
   source       = "github.com/nix-community/nixos-anywhere//terraform/nix-build"
   attribute    = local.attribute
-  special_args = { settings = local.settings }
+  special_args = local.special_args
 }
 
 # The AMI seeds root's authorized_keys from the key pair, so uploads run as root. On the

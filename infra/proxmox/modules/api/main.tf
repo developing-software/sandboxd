@@ -7,6 +7,9 @@ locals {
     admin         = { user = var.admin_user, sshKeys = var.ssh_public_keys }
     tailscale     = { enable = var.tailscale_host != "", host = var.tailscale_host }
   }, var.extra_settings)
+  # nixos-anywhere's nix-build.sh splices special_args into a Nix ''…'' string, where
+  # `${` is interpolation; `''${` is its escape and lands as a literal `${` for conf.
+  special_args = { settings = jsondecode(replace(jsonencode(local.settings), "$${", "''$${")) }
   # Both units read one file: the API's secrets plus the tunnel token.
   env = merge(var.env, { TUNNEL_TOKEN = data.cloudflare_zero_trust_tunnel_cloudflared_token.this.token })
 }

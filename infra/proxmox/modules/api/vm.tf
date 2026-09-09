@@ -55,13 +55,13 @@ resource "proxmox_virtual_environment_vm" "vm" {
 module "system" {
   source       = "github.com/nix-community/nixos-anywhere//terraform/nix-build"
   attribute    = "${local.attribute}.toplevel"
-  special_args = { settings = local.settings }
+  special_args = local.special_args
 }
 
 module "disko" {
   source       = "github.com/nix-community/nixos-anywhere//terraform/nix-build"
   attribute    = "${local.attribute}.diskoScript"
-  special_args = { settings = local.settings }
+  special_args = local.special_args
 }
 
 module "install" {
